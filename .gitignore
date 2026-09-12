@@ -1,0 +1,6 @@
+node_modules
+.netlify/state.json
+.netlify/functions-serve
+.netlify/edge-functions-dist
+.DS_Store
+.env

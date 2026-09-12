@@ -1,0 +1,18 @@
+[build]
+  publish = "public"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Preserved GhostOS lead webhook (POST, x-ghostos-secret)
+[[redirects]]
+  from = "/api/ghostos"
+  to = "/.netlify/functions/ghostos"
+  status = 200
+
+# Friendly alias for the owner login screen
+[[redirects]]
+  from = "/login"
+  to = "/index.html"
+  status = 200
