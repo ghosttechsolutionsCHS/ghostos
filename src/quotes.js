@@ -1,4 +1,5 @@
-import { TABLES, createApproval, createRecord, logActivity, updateRecord } from './airtable.js';
+import { TABLES, createApproval, createRecord, getRecord, logActivity, updateRecord } from './airtable.js';
+import { assertTransition } from './state-machine.js';
 
 function money(value) {
   const n = Number(value || 0);
@@ -23,6 +24,20 @@ export function quoteNeedsOwnerApproval({ grossMargin, pricingException = false,
   return { required: false, type: null, reason: null };
 }
 
+async function moveJobForQuote(jobId, targetStatus, fields) {
+  let job = await getRecord(TABLES.JOBS, jobId);
+  let current = job.fields.Status || 'New Lead';
+
+  if (current === 'New Lead' && targetStatus !== 'Awaiting Customer') {
+    assertTransition(current, 'Need Quote');
+    await updateRecord(TABLES.JOBS, jobId, { Status: 'Need Quote', 'RELAY State': 'Ready to Quote' });
+    current = 'Need Quote';
+  }
+
+  assertTransition(current, targetStatus);
+  return updateRecord(TABLES.JOBS, jobId, { ...fields, Status: targetStatus });
+}
+
 export async function createQuoteForJob({
   jobId,
   jobName,
@@ -39,11 +54,7 @@ export async function createQuoteForJob({
   const economics = calculateQuote({ laborPrice, partsPrice, otherFees, partsCost });
   if (economics.total <= 0) throw new Error('Quote total must be greater than zero');
 
-  const approval = quoteNeedsOwnerApproval({
-    grossMargin: economics.grossMargin,
-    pricingException,
-    purchaseRequired,
-  });
+  const approval = quoteNeedsOwnerApproval({ grossMargin: economics.grossMargin, pricingException, purchaseRequired });
   const stamp = new Date().toISOString();
   const quote = await createRecord(TABLES.QUOTES, {
     Quote: `${jobName || jobId} — ${stamp}`,
@@ -64,15 +75,15 @@ export async function createQuoteForJob({
     'Created At': stamp,
   });
 
-  await updateRecord(TABLES.JOBS, jobId, {
+  const targetStatus = approval.required && approval.type === 'Purchase' ? 'Part Approval' : 'Quoted';
+  await moveJobForQuote(jobId, targetStatus, {
     'Quoted Price': economics.total,
     'Parts Cost': economics.cost,
-    Status: approval.required && approval.type === 'Purchase' ? 'Part Approval' : 'Quoted',
     'RELAY State': approval.required ? 'Awaiting Owner' : 'Awaiting Customer',
     'RELAY Reply Draft': customerMessage || '',
     'RELAY Next Action': approval.required
       ? `Owner approval required: ${approval.reason}`
-      : 'Send the approved quote to the customer and await response.',
+      : 'Quote is approved. RELAY can send the routine quote message once an outbound provider is configured.',
   });
 
   if (approval.required) {
