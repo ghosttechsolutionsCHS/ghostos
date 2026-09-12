@@ -64,12 +64,13 @@ export const saveRelayDraftTool = tool({
 
 export const sendRoutineMessageTool = tool({
   name: 'send_routine_message',
-  description: 'Deliver an already-prepared routine customer message through the configured outbound provider. Only clarification, quote, follow-up, verified status update, or scheduling-question messages are eligible. Never use for consequential commitments.',
+  description: 'Deliver an already-prepared routine customer message through the configured provider-neutral outbound adapter. Automatic sending is blocked by pending owner approval or SMS opt-out. Duplicate sends are suppressed. Set retry=true only after a prior failed attempt when retrying is appropriate.',
   parameters: z.object({
     jobId: z.string().min(1),
     message: z.string().min(1).max(20000),
     messageType: z.enum(['clarification','quote','follow_up','status_update','scheduling_question']),
     channel: z.enum(['auto','sms','email']).default('auto'),
+    retry: z.boolean().default(false),
   }),
   async execute(args) { return deliverRoutineMessage(args); },
 });
