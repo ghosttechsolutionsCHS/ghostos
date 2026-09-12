@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GhostOS Dashboard</title>
+  <style>
+    :root{color-scheme:dark;--bg:#090b0f;--panel:#11151c;--panel2:#171c24;--line:#28303b;--text:#f4f7fb;--muted:#8f9aaa;--good:#53d18b;--warn:#f4c95d;--bad:#f06d6d;--accent:#a78bfa}
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#080a0e,#0d1117);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+    header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--line);background:rgba(9,11,15,.88);backdrop-filter:blur(16px)}
+    .brand{display:flex;gap:12px;align-items:center}.ghost{width:36px;height:36px;border-radius:12px;background:linear-gradient(135deg,#fff,#a78bfa);box-shadow:0 0 28px rgba(167,139,250,.3)} h1{font-size:18px;margin:0}.sub{color:var(--muted);font-size:12px}
+    button,input{font:inherit} button{background:#fff;color:#0b0d11;border:0;border-radius:10px;padding:9px 12px;font-weight:700;cursor:pointer} button.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--line)} button.danger{background:#3a1719;color:#ffb4b4;border:1px solid #6d2c31}
+    main{max-width:1480px;margin:auto;padding:24px}.grid{display:grid;gap:14px}.metrics{grid-template-columns:repeat(6,minmax(0,1fr))}.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+    .metric .label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.metric .value{font-size:25px;font-weight:800;margin-top:6px}.section{margin-top:18px}.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.section-head h2{font-size:15px;margin:0}.split{grid-template-columns:1fr 1.25fr}.agents{grid-template-columns:repeat(5,minmax(0,1fr))}.agent .name{font-weight:800}.pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);font-size:11px;margin-top:8px}.pill.Done,.pill.Idle{color:var(--good);border-color:#245d3d}.pill.Running{color:var(--warn);border-color:#705d22}.pill.Blocked,.pill.Error{color:var(--bad);border-color:#6a2929}
+    table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:10px 9px;border-bottom:1px solid var(--line);vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}td small{color:var(--muted)}.scroll{overflow:auto;max-height:520px}.empty{color:var(--muted);padding:20px 0}
+    .approval{padding:14px 0;border-bottom:1px solid var(--line)}.approval:last-child{border-bottom:0}.approval-title{font-weight:800}.approval-meta{color:var(--muted);font-size:12px;margin:4px 0 9px}.approval-actions{display:flex;gap:8px}.auth{display:flex;gap:8px;align-items:center}.auth input{width:210px;background:#0d1117;border:1px solid var(--line);color:var(--text);padding:9px 11px;border-radius:10px}.error{color:#ffaaaa;margin:12px 0}.muted{color:var(--muted)}
+    @media(max-width:1050px){.metrics{grid-template-columns:repeat(3,1fr)}.agents{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}}@media(max-width:600px){main{padding:14px}header{padding:14px;align-items:flex-start;gap:12px;flex-direction:column}.metrics{grid-template-columns:repeat(2,1fr)}.agents{grid-template-columns:1fr}.auth{width:100%}.auth input{flex:1;width:auto}}
+  </style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="ghost"></div><div><h1>GhostOS</h1><div class="sub">Ghost Tech Solutions operating dashboard</div></div></div>
+  <div class="auth"><input id="key" type="password" placeholder="GhostOS key" autocomplete="current-password"/><button id="load">Unlock</button><button id="refresh" class="secondary">Refresh</button></div>
+</header>
+<main>
+  <div id="error" class="error"></div>
+  <section class="grid metrics" id="metrics"></section>
+  <section class="section"><div class="section-head"><h2>Agents</h2><span id="stamp" class="muted"></span></div><div class="grid agents" id="agents"></div></section>
+  <section class="section grid split">
+    <div class="card"><div class="section-head"><h2>Owner Inbox</h2><span class="muted">Consequential only</span></div><div id="approvals"></div></div>
+    <div class="card"><div class="section-head"><h2>Jobs</h2><span class="muted">Live Airtable state</span></div><div class="scroll"><table><thead><tr><th>Job</th><th>Status</th><th>Quote</th><th>RELAY</th></tr></thead><tbody id="jobs"></tbody></table></div></div>
+  </section>
+  <section class="section card"><div class="section-head"><h2>Recent Agent Activity</h2><span class="muted">Audit trail</span></div><div class="scroll"><table><thead><tr><th>Agent</th><th>Action</th><th>Status</th><th>Detail</th><th>Time</th></tr></thead><tbody id="activity"></tbody></table></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);const money=v=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(Number(v||0));
+let secret=sessionStorage.getItem('ghostosKey')||'';$('key').value=secret;
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function metric(label,value){return `<div class="card metric"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div></div>`}
+async function api(path,options={}){const res=await fetch(path,{...options,headers:{'content-type':'application/json','x-ghostos-secret':secret,...(options.headers||{})}});const data=await res.json();if(!res.ok)throw new Error(data.error||`HTTP ${res.status}`);return data}
+function render(data){const m=data.metrics;$('metrics').innerHTML=[metric('Active jobs',m.activeJobs),metric('Pending approvals',m.pendingApprovals),metric('Quoted pipeline',money(m.quotedPipeline)),metric('Revenue collected',money(m.revenueCollected)),metric('Net cash',money(m.netCash)),metric('Parts researched',m.partsResearched)].join('');
+$('agents').innerHTML=data.agents.map(a=>`<div class="card agent"><div class="name">${esc(a.name)}</div><span class="pill ${esc(a.status)}">${esc(a.status)}</span><div class="muted" style="margin-top:10px">${esc(a.lastAction||'No activity yet')}</div><small class="muted">${esc(a.at?new Date(a.at).toLocaleString():'')}</small></div>`).join('');
+$('approvals').innerHTML=data.approvals.length?data.approvals.map(a=>{const f=a.fields||{};return `<div class="approval"><div class="approval-title">${esc(f.Approval||f.Type||'Approval')}</div><div class="approval-meta">${esc(f.Type||'')} ${f.Amount?`· ${money(f.Amount)}`:''}</div><div>${esc(f.Summary||'')}</div><div class="muted" style="margin:6px 0">${esc(f['Requested Action']||'')}</div><div class="approval-actions"><button onclick="decide('${esc(a.id)}','Approved')">Approve</button><button class="danger" onclick="decide('${esc(a.id)}','Rejected')">Reject</button></div></div>`}).join(''):'<div class="empty">No pending approvals.</div>';
+$('jobs').innerHTML=data.jobs.map(j=>{const f=j.fields||{};return `<tr><td><strong>${esc(f['Job / Customer']||j.id)}</strong><br><small>${esc(f['Device / Service']||'')}</small></td><td>${esc(f.Status||'')}</td><td>${f['Quoted Price']?money(f['Quoted Price']):'—'}</td><td>${esc(f['RELAY State']||'—')}<br><small>${esc(f['RELAY Next Action']||'')}</small></td></tr>`}).join('');
+$('activity').innerHTML=data.activity.map(r=>{const f=r.fields||{};return `<tr><td>${esc(f.Agent||'')}</td><td>${esc(f['Action Type']||'')}</td><td><span class="pill ${esc(f.Status||'')}">${esc(f.Status||'')}</span></td><td>${esc(f.Detail||'')}</td><td><small>${esc(f['Created At']?new Date(f['Created At']).toLocaleString():'')}</small></td></tr>`}).join('');$('stamp').textContent=`Updated ${new Date(data.generatedAt).toLocaleString()}`}
+async function load(){secret=$('key').value.trim();if(!secret){$('error').textContent='Enter the GhostOS key.';return}sessionStorage.setItem('ghostosKey',secret);$('error').textContent='';try{render(await api('/api/dashboard'))}catch(e){$('error').textContent=e.message}}
+async function decide(id,decision){const notes=prompt(`${decision} notes (optional):`)||'';try{await api('/api/approval',{method:'POST',body:JSON.stringify({approvalId:id,decision,notes})});await load()}catch(e){$('error').textContent=e.message}}
+$('load').onclick=load;$('refresh').onclick=load;if(secret)load();
+</script>
+</body>
+</html>
