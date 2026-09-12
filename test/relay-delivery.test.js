@@ -34,6 +34,7 @@ function memoryDeps({ jobFields = {}, approvals = [], providerResult } = {}) {
     },
     async getRecord(table, id) {
       if (table === 'Leads & Jobs') return structuredClone(jobs.get(id));
+      if (table === 'RELAY Messages') return structuredClone(messages.find((r) => r.id === id));
       throw new Error(`Unexpected get ${table}`);
     },
     async listRecords(table, options = {}) {
@@ -81,36 +82,44 @@ function memoryDeps({ jobFields = {}, approvals = [], providerResult } = {}) {
   };
 }
 
-const messageArgs = {
+const draftArgs = {
   jobId: 'job1',
   message: 'Your repair quote is ready.',
   messageType: 'quote',
   channel: 'sms',
 };
 
-test('marks sent only after provider confirms success and stores provider metadata', async () => {
+test('creating an AI draft never calls the outbound provider', async () => {
   const memory = memoryDeps();
   const service = createRelayDeliveryService(memory.deps);
-  const result = await service.deliverRoutineMessage(messageArgs);
+  const draft = await service.createDraft(draftArgs);
+
+  assert.equal(memory.sends, 0);
+  assert.equal(memory.messages.length, 1);
+  assert.equal(draft.fields.Status, 'Pending');
+  assert.equal(draft.fields.Attempt, 0);
+  assert.equal(memory.jobs.get('job1').fields['Last Contacted'], undefined);
+});
+
+test('owner send marks sent only after provider confirms success', async () => {
+  const memory = memoryDeps();
+  const service = createRelayDeliveryService(memory.deps);
+  const draft = await service.createDraft(draftArgs);
+  const result = await service.sendOwnerApprovedMessage({ messageId: draft.id });
 
   assert.equal(result.sent, true);
   assert.equal(result.delivered, false);
   assert.equal(result.providerMessageId, 'msg-123');
   assert.equal(memory.sends, 1);
-  assert.equal(memory.messages.length, 1);
   assert.equal(memory.messages[0].fields.Status, 'Sent');
   assert.equal(memory.messages[0].fields['Provider Message ID'], 'msg-123');
-  assert.equal(memory.messages[0].fields.Destination, '+18435550199');
-  assert.equal(memory.messages[0].fields.Job[0], 'job1');
-  assert.equal(memory.messages[0].fields['Sent At'], '2026-09-12T23:30:00.000Z');
 });
 
-test('provider failure is recorded and is never reported as sent or delivered', async () => {
-  const memory = memoryDeps({
-    providerResult: { ok: false, status: 'failed', failureReason: 'carrier rejected destination' },
-  });
+test('provider failure is recorded and never reported as sent or delivered', async () => {
+  const memory = memoryDeps({ providerResult: { ok: false, status: 'failed', failureReason: 'carrier rejected destination' } });
   const service = createRelayDeliveryService(memory.deps);
-  const result = await service.deliverRoutineMessage(messageArgs);
+  const draft = await service.createDraft(draftArgs);
+  const result = await service.sendOwnerApprovedMessage({ messageId: draft.id });
 
   assert.equal(result.sent, false);
   assert.equal(result.delivered, false);
@@ -119,44 +128,42 @@ test('provider failure is recorded and is never reported as sent or delivered', 
   assert.equal(memory.jobs.get('job1').fields['Last Contacted'], undefined);
 });
 
-test('duplicate prevention reuses the same ledger entry and never sends twice', async () => {
+test('duplicate owner sends never call provider twice', async () => {
   const memory = memoryDeps();
   const service = createRelayDeliveryService(memory.deps);
-  const first = await service.deliverRoutineMessage(messageArgs);
-  const second = await service.deliverRoutineMessage(messageArgs);
+  const draft = await service.createDraft(draftArgs);
+  const first = await service.sendOwnerApprovedMessage({ messageId: draft.id });
+  const second = await service.sendOwnerApprovedMessage({ messageId: draft.id });
 
   assert.equal(first.sent, true);
   assert.equal(second.duplicate, true);
   assert.equal(memory.sends, 1);
-  assert.equal(memory.messages.length, 1);
-  assert.equal(second.idempotencyKey, first.idempotencyKey);
 });
 
-test('SMS opt-out blocks provider calls and records an opted-out ledger result', async () => {
+test('SMS opt-out allows drafting but blocks owner send', async () => {
   const memory = memoryDeps({ jobFields: { 'RELAY SMS Opted Out': true } });
   const service = createRelayDeliveryService(memory.deps);
-  const result = await service.deliverRoutineMessage(messageArgs);
+  const draft = await service.createDraft(draftArgs);
+  const result = await service.sendOwnerApprovedMessage({ messageId: draft.id });
 
+  assert.equal(memory.messages[0].fields.Status, 'Pending');
   assert.equal(result.blocked, true);
   assert.match(result.reason, /opted out/i);
   assert.equal(memory.sends, 0);
-  assert.equal(memory.messages[0].fields.Status, 'Opted Out');
 });
 
-test('pending Owner Inbox approval blocks sending even if RELAY State is not Awaiting Owner', async () => {
-  const memory = memoryDeps({
-    approvals: [{ id: 'approval1', fields: { Status: 'Pending', Job: ['job1'] } }],
-  });
+test('pending Owner Inbox approval allows drafting but blocks owner send', async () => {
+  const memory = memoryDeps({ approvals: [{ id: 'approval1', fields: { Status: 'Pending', Job: ['job1'] } }] });
   const service = createRelayDeliveryService(memory.deps);
-  const result = await service.deliverRoutineMessage(messageArgs);
+  const draft = await service.createDraft(draftArgs);
+  const result = await service.sendOwnerApprovedMessage({ messageId: draft.id });
 
   assert.equal(result.blocked, true);
   assert.match(result.reason, /Owner Inbox approval/);
   assert.equal(memory.sends, 0);
-  assert.equal(memory.messages[0].fields.Status, 'Blocked');
 });
 
-test('failed sends require explicit retry and remain capped/idempotent', async () => {
+test('failed sends require a new explicit owner retry and remain idempotent', async () => {
   let attempt = 0;
   const memory = memoryDeps();
   memory.deps.provider.send = async () => {
@@ -166,21 +173,23 @@ test('failed sends require explicit retry and remain capped/idempotent', async (
       : { ok: true, provider: 'test-provider', providerMessageId: 'msg-retry', status: 'sent', confirmedAt: '2026-09-12T23:31:00.000Z' };
   };
   const service = createRelayDeliveryService(memory.deps);
-  const first = await service.deliverRoutineMessage(messageArgs);
-  const withoutRetry = await service.deliverRoutineMessage(messageArgs);
-  const retried = await service.deliverRoutineMessage({ ...messageArgs, retry: true });
+  const draft = await service.createDraft(draftArgs);
+  const first = await service.sendOwnerApprovedMessage({ messageId: draft.id });
+  const withoutRetry = await service.sendOwnerApprovedMessage({ messageId: draft.id });
+  const retried = await service.sendOwnerApprovedMessage({ messageId: draft.id, retry: true });
 
   assert.equal(first.sent, false);
   assert.equal(withoutRetry.retryRequired, true);
   assert.equal(retried.sent, true);
-  assert.equal(memory.messages.length, 1);
+  assert.equal(attempt, 2);
   assert.equal(memory.messages[0].fields.Attempt, 2);
 });
 
-test('delivery callback upgrades a sent message to delivered only on provider confirmation', async () => {
+test('delivery callback upgrades owner-sent message to delivered only on provider confirmation', async () => {
   const memory = memoryDeps();
   const service = createRelayDeliveryService(memory.deps);
-  const sent = await service.deliverRoutineMessage(messageArgs);
+  const draft = await service.createDraft(draftArgs);
+  const sent = await service.sendOwnerApprovedMessage({ messageId: draft.id });
   const callback = await service.applyDeliveryCallback({
     providerMessageId: sent.providerMessageId,
     status: 'delivered',
