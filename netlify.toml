@@ -21,6 +21,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/relay-send"
+  to = "/.netlify/functions/relay-send"
+  status = 200
+
+[[redirects]]
   from = "/api/relay-callback"
   to = "/.netlify/functions/relay-callback"
   status = 200
