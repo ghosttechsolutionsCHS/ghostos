@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { TABLES, createApproval, createRecord, getRecord, logActivity, readActiveControls, updateRecord } from './airtable.js';
 import { assertTransition } from './state-machine.js';
 import { createQuoteForJob } from './quotes.js';
-import { deliverRoutineMessage } from './relay-delivery.js';
+import { createRelayDraft } from './relay-delivery.js';
 
 export const getJobTool = tool({
   name: 'get_job',
@@ -44,35 +44,27 @@ export const updateJobStateTool = tool({
 
 export const saveRelayDraftTool = tool({
   name: 'save_relay_draft',
-  description: 'Save a routine customer-facing draft and next action to Airtable. This does not claim the message was externally sent.',
+  description: 'Create a customer-facing RELAY draft in Airtable for owner review. This tool can never send a message. Every outbound send requires the owner to press Send in the dashboard.',
   parameters: z.object({
     recordId: z.string().min(1),
     reply: z.string().min(1).max(20000),
-    nextAction: z.string().min(1).max(10000),
-    relayState: z.enum(['New','Need More Info','Ready to Quote','Part Research','Awaiting Owner','Awaiting Customer','Scheduled','Closed']),
+    messageType: z.enum(['clarification','quote','follow_up','status_update','scheduling_question']).default('follow_up'),
+    channel: z.enum(['sms','email','auto']).default('sms'),
+    relayState: z.enum(['New','Need More Info','Ready to Quote','Part Research','Awaiting Owner','Awaiting Customer','Scheduled','Closed']).optional(),
+    nextAction: z.string().max(10000).optional(),
   }),
-  async execute({ recordId, reply, nextAction, relayState }) {
-    const updated = await updateRecord(TABLES.JOBS, recordId, {
-      'RELAY Reply Draft': reply,
-      'RELAY Next Action': nextAction,
-      'RELAY State': relayState,
-    });
-    await logActivity({ agent: 'RELAY', jobId: recordId, actionType: 'customer_reply_drafted', detail: reply });
-    return updated;
+  async execute({ recordId, reply, messageType, channel, relayState, nextAction }) {
+    const draft = await createRelayDraft({ jobId: recordId, message: reply, messageType, channel });
+    const fields = {};
+    if (relayState) fields['RELAY State'] = relayState;
+    if (nextAction) fields['RELAY Next Action'] = nextAction;
+    if (Object.keys(fields).length) await updateRecord(TABLES.JOBS, recordId, fields);
+    return {
+      draftId: draft.id,
+      status: draft.fields?.Status || 'Pending',
+      message: 'Draft saved for owner review. No customer message was sent.',
+    };
   },
-});
-
-export const sendRoutineMessageTool = tool({
-  name: 'send_routine_message',
-  description: 'Deliver an already-prepared routine customer message through the configured provider-neutral outbound adapter. Automatic sending is blocked by pending owner approval or SMS opt-out. Duplicate sends are suppressed. Set retry=true only after a prior failed attempt when retrying is appropriate.',
-  parameters: z.object({
-    jobId: z.string().min(1),
-    message: z.string().min(1).max(20000),
-    messageType: z.enum(['clarification','quote','follow_up','status_update','scheduling_question']),
-    channel: z.enum(['auto','sms','email']).default('auto'),
-    retry: z.boolean().default(false),
-  }),
-  async execute(args) { return deliverRoutineMessage(args); },
 });
 
 const researchedPartSchema = z.object({
@@ -146,7 +138,7 @@ export const createQuoteTool = tool({
 
 export const requestOwnerApprovalTool = tool({
   name: 'request_owner_approval',
-  description: 'Create an Owner Inbox item only for consequential actions: purchase, pricing exception, refund, contract, material ad spend, scheduling exception, or unusual external commitment.',
+  description: 'Create an Owner Inbox item only for consequential actions: purchase, pricing exception, refund, contract, material ad spend, scheduling exception, or unusual external commitment. Do not use Owner Inbox merely because a routine customer draft needs the owner to press Send.',
   parameters: z.object({
     type: z.enum(['Purchase','Pricing Exception','Refund','Contract','Ad Spend','Scheduling Exception','Other']),
     jobId: z.string().optional(),
