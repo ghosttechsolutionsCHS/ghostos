@@ -1,0 +1,14 @@
+{
+  "name": "ghostos-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx netlify dev"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.18.0",
+    "airtable": "^0.12.2",
+    "zod": "^4.6.2"
+  }
+}
