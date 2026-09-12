@@ -1,9 +1,25 @@
+import { TABLES, getRecord, listRecords } from '../../src/airtable.js';
 import { markRelayManuallySent, updateRelayDraft } from '../../src/relay-delivery.js';
 
 const json = (body, status = 200) => Response.json(body, {
   status,
   headers: { 'cache-control': 'no-store' },
 });
+
+async function manualSendBlockReason(messageId) {
+  const message = await getRecord(TABLES.MESSAGES, messageId);
+  const jobId = Array.isArray(message.fields.Job) ? message.fields.Job[0] : null;
+  if (!jobId) return 'RELAY message has no linked job';
+  const job = await getRecord(TABLES.JOBS, jobId);
+  if (job.fields['RELAY State'] === 'Awaiting Owner') return 'Job is awaiting consequential owner approval';
+  const approvals = await listRecords(TABLES.APPROVALS, { maxRecords: 200 });
+  const pending = approvals.find((record) => (
+    record.fields.Status === 'Pending'
+    && Array.isArray(record.fields.Job)
+    && record.fields.Job.includes(jobId)
+  ));
+  return pending ? `Owner Inbox approval ${pending.id} is still pending` : null;
+}
 
 export default async (req) => {
   if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
@@ -22,6 +38,8 @@ export default async (req) => {
     }
 
     if (action === 'mark_sent') {
+      const blocked = await manualSendBlockReason(messageId);
+      if (blocked) return json({ ok: false, blocked: true, error: blocked }, 409);
       const result = await markRelayManuallySent({
         messageId,
         message,
