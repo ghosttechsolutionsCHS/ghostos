@@ -31,6 +31,21 @@
   status = 200
 
 [[redirects]]
+  from = "/api/relay-provider/twilio"
+  to = "/.netlify/functions/relay-twilio"
+  status = 200
+
+[[redirects]]
+  from = "/api/twilio/status"
+  to = "/.netlify/functions/twilio-status"
+  status = 200
+
+[[redirects]]
+  from = "/api/twilio/inbound"
+  to = "/.netlify/functions/twilio-inbound"
+  status = 200
+
+[[redirects]]
   from = "/dashboard"
   to = "/dashboard.html"
   status = 200
