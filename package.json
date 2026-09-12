@@ -1,1 +1,1 @@
-{"name":"ghostos-core","version":"0.1.0","type":"module","scripts":{"dev":"netlify dev"},"dependencies":{"@openai/agents":"latest","airtable":"latest","zod":"latest"},"devDependencies":{"netlify-cli":"latest"}}
+{"name":"ghostos-core","version":"0.1.0","type":"module","scripts":{"dev":"netlify dev","check":"node --check src/ghostos.js && node --check netlify/functions/ghostos.js"},"dependencies":{"@openai/agents":"latest","airtable":"latest","zod":"latest"},"devDependencies":{"netlify-cli":"latest"}}
