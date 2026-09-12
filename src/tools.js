@@ -44,7 +44,7 @@ export const updateJobStateTool = tool({
 
 export const saveRelayDraftTool = tool({
   name: 'save_relay_draft',
-  description: 'Create a customer-facing RELAY draft in Airtable for owner review. This tool can never send a message. Every outbound send requires the owner to press Send in the dashboard.',
+  description: 'Create a customer-facing RELAY draft in Airtable for owner review. This tool can never send a message. The owner edits/copies the text in the dashboard, sends it personally from their phone, then manually marks it sent.',
   parameters: z.object({
     recordId: z.string().min(1),
     reply: z.string().min(1).max(20000),
@@ -62,7 +62,7 @@ export const saveRelayDraftTool = tool({
     return {
       draftId: draft.id,
       status: draft.fields?.Status || 'Pending',
-      message: 'Draft saved for owner review. No customer message was sent.',
+      message: 'Draft saved for owner review/copy. No customer message was sent.',
     };
   },
 });
@@ -138,7 +138,7 @@ export const createQuoteTool = tool({
 
 export const requestOwnerApprovalTool = tool({
   name: 'request_owner_approval',
-  description: 'Create an Owner Inbox item only for consequential actions: purchase, pricing exception, refund, contract, material ad spend, scheduling exception, or unusual external commitment. Do not use Owner Inbox merely because a routine customer draft needs the owner to press Send.',
+  description: 'Create an Owner Inbox item only for consequential actions: purchase, pricing exception, refund, contract, material ad spend, scheduling exception, or unusual external commitment. Routine customer drafts never belong in Owner Inbox.',
   parameters: z.object({
     type: z.enum(['Purchase','Pricing Exception','Refund','Contract','Ad Spend','Scheduling Exception','Other']),
     jobId: z.string().optional(),
