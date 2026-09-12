@@ -109,13 +109,14 @@ export async function createApproval({ type, jobId, quoteId, amount, summary, re
 }
 
 export async function getDashboardSnapshot() {
-  const [jobs, parts, quotes, approvals, activity, cash] = await Promise.all([
+  const [jobs, parts, quotes, approvals, activity, cash, messages] = await Promise.all([
     listRecords(TABLES.JOBS, { maxRecords: 200 }),
     listRecords(TABLES.PARTS, { maxRecords: 200 }),
     listRecords(TABLES.QUOTES, { maxRecords: 200 }),
     listRecords(TABLES.APPROVALS, { maxRecords: 200 }),
     listRecords(TABLES.ACTIVITY, { maxRecords: 100 }),
     listRecords(TABLES.CASH, { maxRecords: 500 }),
+    listRecords(TABLES.MESSAGES, { maxRecords: 200 }),
   ]);
 
   const pendingApprovals = approvals.filter((r) => r.fields.Status === 'Pending');
@@ -126,6 +127,7 @@ export async function getDashboardSnapshot() {
   const moneyOut = cash.reduce((sum, r) => sum + Number(r.fields['Money Out'] || 0), 0);
   const quotedPipeline = jobs.reduce((sum, r) => sum + Number(r.fields['Quoted Price'] || 0), 0);
   const revenueCollected = jobs.reduce((sum, r) => sum + Number(r.fields['Revenue Collected'] || 0), 0);
+  const relayDrafts = messages.filter((r) => ['Pending', 'Failed', 'Blocked'].includes(r.fields.Status));
 
   const agents = ['ATLAS', 'RELAY', 'SUPPLY', 'LEDGER', 'DISPATCH'].map((name) => {
     const recent = activity
@@ -147,6 +149,7 @@ export async function getDashboardSnapshot() {
       activeJobs: activeJobs.length,
       completedJobs: completed.length,
       pendingApprovals: pendingApprovals.length,
+      relayDrafts: relayDrafts.length,
       partsResearched: researchedParts.length,
       quotes: quotes.length,
       quotedPipeline,
@@ -159,6 +162,9 @@ export async function getDashboardSnapshot() {
     jobs: jobs.slice(0, 50),
     quotes: quotes.slice(0, 50),
     approvals: pendingApprovals.slice(0, 50),
+    messages: messages
+      .sort((a, b) => new Date(b.fields['Created At'] || 0) - new Date(a.fields['Created At'] || 0))
+      .slice(0, 100),
     activity: activity
       .sort((a, b) => new Date(b.fields['Created At'] || 0) - new Date(a.fields['Created At'] || 0))
       .slice(0, 50),
