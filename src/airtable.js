@@ -6,6 +6,7 @@ export const TABLES = Object.freeze({
   QUOTES: 'Quotes',
   APPROVALS: 'Owner Inbox',
   ACTIVITY: 'Agent Activity',
+  MESSAGES: 'RELAY Messages',
   CASH: 'Cash & Storefront',
   CONTROL: 'GhostOS Control',
 });
