@@ -26,6 +26,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/builder"
+  to = "/.netlify/functions/builder"
+  status = 200
+
+[[redirects]]
   from = "/dashboard"
   to = "/dashboard.html"
   status = 200

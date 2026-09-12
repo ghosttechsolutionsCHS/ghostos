@@ -1,23 +1,19 @@
 {
   "name": "ghostos-core",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "netlify dev",
-    "check": "node --check src/airtable.js && node --check src/state-machine.js && node --check src/quotes.js && node --check src/relay-provider.js && node --check src/relay-delivery.js && node --check src/twilio-adapter.js && node --check src/tools.js && node --check src/ghostos.js && node --check netlify/functions/ghostos.js && node --check netlify/functions/dashboard.js && node --check netlify/functions/approval.js && node --check netlify/functions/relay-message.js && node --check netlify/functions/relay-send.js && node --check netlify/functions/relay-callback.js && node --check netlify/functions/relay-twilio.js && node --check netlify/functions/twilio-status.js && node --check netlify/functions/twilio-inbound.js",
+    "check": "node --check src/airtable.js && node --check src/state-machine.js && node --check src/quotes.js && node --check src/relay-provider.js && node --check src/relay-delivery.js && node --check src/twilio-adapter.js && node --check src/builder.js && node --check src/tools.js && node --check src/ghostos.js && node --check netlify/functions/ghostos.js && node --check netlify/functions/dashboard.js && node --check netlify/functions/approval.js && node --check netlify/functions/relay-message.js && node --check netlify/functions/relay-send.js && node --check netlify/functions/relay-callback.js && node --check netlify/functions/relay-twilio.js && node --check netlify/functions/twilio-status.js && node --check netlify/functions/twilio-inbound.js && node --check netlify/functions/builder.js",
     "test": "node --test"
   },
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": ">=20" },
   "dependencies": {
     "@openai/agents": "0.18.0",
     "airtable": "0.12.2",
     "twilio": "6.1.1",
     "zod": "4.6.2"
   },
-  "devDependencies": {
-    "netlify-cli": "latest"
-  }
+  "devDependencies": { "netlify-cli": "latest" }
 }
