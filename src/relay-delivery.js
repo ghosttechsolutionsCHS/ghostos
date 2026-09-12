@@ -7,7 +7,6 @@ import {
   logActivity,
   updateRecord,
 } from './airtable.js';
-import { createRelayProviderFromEnv } from './relay-provider.js';
 
 const MESSAGE_TYPES = new Set([
   'clarification',
@@ -17,8 +16,7 @@ const MESSAGE_TYPES = new Set([
   'scheduling_question',
 ]);
 const CALLBACK_STATUSES = new Set(['accepted', 'sent', 'delivered', 'failed']);
-const FINAL_OR_IN_FLIGHT = new Set(['Sending', 'Accepted', 'Sent', 'Delivered']);
-const MAX_ATTEMPTS = 3;
+const EDITABLE_STATUSES = new Set(['Pending', 'Blocked', 'Failed']);
 
 function formulaString(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -39,15 +37,6 @@ function airtableStatus(providerStatus) {
 
 function customerReference(job) {
   return job.fields['Customer Name'] || job.fields['Job / Customer'] || job.id;
-}
-
-async function pendingOwnerApproval(deps, jobId) {
-  const approvals = await deps.listRecords(TABLES.APPROVALS, { maxRecords: 200 });
-  return approvals.find((record) => (
-    record.fields.Status === 'Pending'
-    && Array.isArray(record.fields.Job)
-    && record.fields.Job.includes(jobId)
-  )) || null;
 }
 
 async function findMessageByKey(deps, key) {
@@ -82,7 +71,6 @@ export function createRelayDeliveryService(overrides = {}) {
     listRecords,
     logActivity,
     updateRecord,
-    provider: createRelayProviderFromEnv(),
     now: () => new Date().toISOString(),
     ...overrides,
   };
@@ -98,7 +86,7 @@ export function createRelayDeliveryService(overrides = {}) {
     if (existing) {
       await deps.updateRecord(TABLES.JOBS, jobId, {
         'RELAY Reply Draft': message,
-        'RELAY Next Action': 'Draft is ready in RELAY Messages. Owner must press Send; AI cannot send customer messages.',
+        'RELAY Next Action': 'Draft is ready in RELAY Messages. Review/edit it, copy it, send it personally, then mark it sent manually.',
       });
       return { ...existing, duplicateDraft: true };
     }
@@ -113,156 +101,148 @@ export function createRelayDeliveryService(overrides = {}) {
       'Message Type': messageType,
       Body: message,
       Status: 'Pending',
-      Provider: deps.provider?.name || 'webhook',
+      Provider: '',
+      'Provider Status': '',
       Attempt: 0,
       'Created At': now,
       'Customer Reference': customerReference(job),
+      'Send Method': '',
     });
 
     await deps.updateRecord(TABLES.JOBS, jobId, {
       'RELAY Reply Draft': message,
-      'RELAY Next Action': 'Draft is ready in RELAY Messages. Owner must press Send; AI cannot send customer messages.',
+      'RELAY Next Action': 'Draft is ready in RELAY Messages. Review/edit it, copy it, send it personally, then mark it sent manually.',
     });
     await deps.logActivity({
       agent: 'RELAY',
       jobId,
       actionType: 'customer_message_drafted',
       status: 'Done',
-      detail: `Draft ${draft.id} created for owner review. No external send occurred.`,
+      detail: `Draft ${draft.id} created for manual owner copy/send. No external send occurred.`,
     });
     return draft;
   }
 
-  async function sendOwnerApprovedMessage({ messageId, retry = false }) {
+  async function updateDraft({ messageId, message }) {
+    const body = String(message || '').trim();
+    if (!body) throw new Error('Draft message cannot be empty');
+    if (body.length > 20000) throw new Error('Draft message is too long');
+
     const ledger = await deps.getRecord(TABLES.MESSAGES, messageId);
+    const status = ledger.fields.Status || 'Pending';
+    if (!EDITABLE_STATUSES.has(status)) {
+      throw new Error(`RELAY message ${messageId} cannot be edited from status ${status}`);
+    }
     const jobId = Array.isArray(ledger.fields.Job) ? ledger.fields.Job[0] : null;
     if (!jobId) throw new Error('RELAY message has no linked job');
     const job = await deps.getRecord(TABLES.JOBS, jobId);
-    const status = ledger.fields.Status || 'Pending';
-
-    if (FINAL_OR_IN_FLIGHT.has(status)) {
-      return {
-        sent: ['Sent', 'Delivered'].includes(status),
-        delivered: status === 'Delivered',
-        accepted: ['Accepted', 'Sent', 'Delivered'].includes(status),
-        duplicate: true,
-        status,
-        providerMessageId: ledger.fields['Provider Message ID'] || null,
-        idempotencyKey: ledger.fields['Idempotency Key'],
-      };
-    }
-    if (status === 'Opted Out') return { sent: false, delivered: false, blocked: true, status, reason: 'Customer is opted out of SMS messaging' };
-    if (status === 'Failed' && !retry) {
-      return { sent: false, delivered: false, retryRequired: true, status, reason: ledger.fields['Failure Reason'] || 'Previous send failed' };
-    }
-    if (!['Pending', 'Failed', 'Blocked'].includes(status)) throw new Error(`RELAY message ${messageId} is not sendable from status ${status}`);
-
-    const approval = await pendingOwnerApproval(deps, jobId);
-    if (job.fields['RELAY State'] === 'Awaiting Owner' || approval) {
-      const reason = approval
-        ? `Owner Inbox approval ${approval.id} is still pending`
-        : 'Job is awaiting consequential owner approval';
-      await deps.logActivity({ agent: 'RELAY', jobId, actionType: 'owner_send_blocked', status: 'Blocked', detail: reason, consequential: true });
-      return { sent: false, delivered: false, blocked: true, status, reason };
-    }
-
     const channel = String(ledger.fields.Channel || 'SMS').toLowerCase();
-    const destination = ledger.fields.Destination || (channel === 'email' ? job.fields.Email : job.fields.Phone);
-    if (channel === 'sms' && job.fields['RELAY SMS Opted Out']) {
-      const reason = 'Customer is opted out of SMS messaging';
-      await deps.logActivity({ agent: 'RELAY', jobId, actionType: 'owner_send_blocked_opt_out', status: 'Blocked', detail: reason });
-      return { sent: false, delivered: false, blocked: true, status: 'Opted Out', reason };
-    }
-    if (!destination) return { sent: false, delivered: false, blocked: true, reason: `No customer ${channel} destination is available` };
+    const destination = ledger.fields.Destination || (channel === 'email' ? job.fields.Email : job.fields.Phone) || '';
+    const messageType = ledger.fields['Message Type'] || 'follow_up';
+    const key = buildIdempotencyKey({ jobId, channel, destination, messageType, message: body });
 
-    const priorAttempt = Number(ledger.fields.Attempt || 0);
-    if (priorAttempt >= MAX_ATTEMPTS) {
-      return { sent: false, delivered: false, blocked: true, status, reason: `Maximum retry attempts (${MAX_ATTEMPTS}) reached` };
-    }
-
-    const attempt = priorAttempt + 1;
-    const now = deps.now();
-    await deps.updateRecord(TABLES.MESSAGES, messageId, {
-      Status: 'Sending',
-      Attempt: attempt,
-      'Last Attempt At': now,
+    const updated = await deps.updateRecord(TABLES.MESSAGES, messageId, {
+      Body: body,
+      'Idempotency Key': key,
+      Status: 'Pending',
+      Provider: '',
+      'Provider Message ID': '',
+      'Provider Status': '',
+      'Provider Detail': '',
       'Failure Reason': '',
+      Attempt: 0,
+      'Last Attempt At': null,
+      'Manual Sent At': null,
+      'Send Method': '',
+      'Sent At': null,
+      'Delivered At': null,
     });
-
-    const result = await deps.provider.send({
-      idempotencyKey: ledger.fields['Idempotency Key'],
-      jobId,
-      customerReference: ledger.fields['Customer Reference'] || customerReference(job),
-      channel,
-      destination,
-      messageType: ledger.fields['Message Type'],
-      message: ledger.fields.Body,
-      customerName: job.fields['Customer Name'] || null,
-    });
-
-    if (!result.ok) {
-      const failureReason = String(result.failureReason || 'Outbound provider did not confirm success').slice(0, 10000);
-      await deps.updateRecord(TABLES.MESSAGES, messageId, {
-        Status: result.status === 'blocked' ? 'Blocked' : 'Failed',
-        'Provider Status': result.status || 'failed',
-        'Failure Reason': failureReason,
-        'Provider Detail': result.providerDetail || '',
-      });
-      await deps.logActivity({ agent: 'RELAY', jobId, actionType: 'owner_message_send_failed', status: result.status === 'blocked' ? 'Blocked' : 'Error', detail: failureReason });
-      return { sent: false, delivered: false, accepted: false, status: result.status || 'failed', reason: failureReason, attempt };
-    }
-
-    const providerStatus = result.status;
-    const confirmedAt = result.confirmedAt || deps.now();
-    const fields = {
-      Status: airtableStatus(providerStatus),
-      Provider: result.provider || deps.provider?.name || 'webhook',
-      'Provider Message ID': result.providerMessageId,
-      'Provider Status': providerStatus,
-      'Provider Detail': result.providerDetail || '',
-      'Failure Reason': '',
-    };
-    if (providerStatus === 'sent' || providerStatus === 'delivered') fields['Sent At'] = confirmedAt;
-    if (providerStatus === 'delivered') fields['Delivered At'] = confirmedAt;
-    await deps.updateRecord(TABLES.MESSAGES, messageId, fields);
-
     await deps.updateRecord(TABLES.JOBS, jobId, {
-      'RELAY Reply Draft': ledger.fields.Body,
-      ...(providerStatus === 'sent' || providerStatus === 'delivered' ? { 'Last Contacted': confirmedAt } : {}),
-      'RELAY State': 'Awaiting Customer',
-      'RELAY Next Action': providerStatus === 'delivered'
-        ? 'Owner-sent message was provider-confirmed delivered. Await customer response.'
-        : providerStatus === 'sent'
-          ? 'Owner-sent message was provider-confirmed sent. Await delivery/customer response.'
-          : 'Owner explicitly sent the message; provider accepted it. Await status callback before claiming sent/delivered.',
+      'RELAY Reply Draft': body,
+      'RELAY Next Action': 'Draft updated. Copy it, send it personally from your phone, then mark it sent manually.',
     });
     await deps.logActivity({
       agent: 'RELAY',
       jobId,
-      actionType: `owner_message_${providerStatus}`,
+      actionType: 'customer_message_draft_edited',
       status: 'Done',
-      detail: JSON.stringify({ messageId, channel, destination, provider: result.provider, providerMessageId: result.providerMessageId, providerStatus }).slice(0, 20000),
+      detail: `Draft ${messageId} edited by owner. No external send occurred.`,
     });
-
-    return {
-      accepted: true,
-      sent: providerStatus === 'sent' || providerStatus === 'delivered',
-      delivered: providerStatus === 'delivered',
-      channel,
-      destination,
-      provider: result.provider,
-      providerMessageId: result.providerMessageId,
-      status: providerStatus,
-      idempotencyKey: ledger.fields['Idempotency Key'],
-      attempt,
-    };
+    return updated;
   }
 
+  async function markManuallySent({ messageId, message, method = 'owner_phone_copy_paste' }) {
+    let ledger = await deps.getRecord(TABLES.MESSAGES, messageId);
+    const status = ledger.fields.Status || 'Pending';
+    if (ledger.fields['Send Method'] === 'owner_phone_copy_paste' && ledger.fields['Manual Sent At']) {
+      return {
+        sent: true,
+        delivered: false,
+        duplicate: true,
+        manual: true,
+        status: 'Sent',
+        manualSentAt: ledger.fields['Manual Sent At'],
+        method: ledger.fields['Send Method'],
+      };
+    }
+    if (!EDITABLE_STATUSES.has(status)) {
+      throw new Error(`RELAY message ${messageId} cannot be manually marked sent from status ${status}`);
+    }
+
+    const jobId = Array.isArray(ledger.fields.Job) ? ledger.fields.Job[0] : null;
+    if (!jobId) throw new Error('RELAY message has no linked job');
+    const job = await deps.getRecord(TABLES.JOBS, jobId);
+    const channel = String(ledger.fields.Channel || 'SMS').toLowerCase();
+    if (channel === 'sms' && job.fields['RELAY SMS Opted Out']) {
+      return { sent: false, delivered: false, blocked: true, reason: 'Customer is marked opted out of SMS. Do not send this text.' };
+    }
+
+    if (message !== undefined && String(message).trim() !== String(ledger.fields.Body || '').trim()) {
+      await updateDraft({ messageId, message });
+      ledger = await deps.getRecord(TABLES.MESSAGES, messageId);
+    }
+
+    const when = deps.now();
+    const sendMethod = String(method || 'owner_phone_copy_paste').slice(0, 250);
+    await deps.updateRecord(TABLES.MESSAGES, messageId, {
+      Status: 'Sent',
+      'Manual Sent At': when,
+      'Send Method': sendMethod,
+      'Sent At': when,
+      'Delivered At': null,
+      Provider: 'Manual owner report',
+      'Provider Message ID': '',
+      'Provider Status': 'owner_reported_sent',
+      'Provider Detail': 'Owner reported sending this message manually outside GhostOS. Delivery was not verified.',
+      'Failure Reason': '',
+    });
+    await deps.updateRecord(TABLES.JOBS, jobId, {
+      'RELAY Reply Draft': ledger.fields.Body,
+      'Last Contacted': when,
+      'RELAY State': 'Awaiting Customer',
+      'RELAY Next Action': 'Owner reported this message sent manually from their phone. Await customer response. Delivery is not verified.',
+    });
+    await deps.logActivity({
+      agent: 'RELAY',
+      jobId,
+      actionType: 'owner_reported_manual_send',
+      status: 'Done',
+      detail: JSON.stringify({ messageId, method: sendMethod, sentAt: when, deliveryVerified: false }).slice(0, 20000),
+    });
+
+    return { sent: true, delivered: false, manual: true, status: 'Sent', manualSentAt: when, method: sendMethod };
+  }
+
+  // Legacy provider callbacks remain isolated for historical provider-tracked records only.
+  // They are not part of normal GhostOS operation and are never required for manual copy/send.
   async function applyDeliveryCallback({ providerMessageId, idempotencyKey, status, timestamp, failureReason, providerDetail }) {
     const normalized = String(status || '').toLowerCase();
     if (!CALLBACK_STATUSES.has(normalized)) throw new Error(`Unsupported RELAY callback status: ${status}`);
     const ledger = await findMessageForCallback(deps, { providerMessageId, idempotencyKey });
     if (!ledger) throw new Error('No RELAY message matches the callback identifiers');
+    if (ledger.fields['Send Method'] === 'owner_phone_copy_paste' || ledger.fields['Manual Sent At']) {
+      throw new Error('Manual owner-reported messages cannot be updated by provider delivery callbacks');
+    }
 
     const when = timestamp || deps.now();
     const fields = {
@@ -282,9 +262,9 @@ export function createRelayDeliveryService(overrides = {}) {
       await deps.logActivity({
         agent: 'RELAY',
         jobId,
-        actionType: `provider_status_${normalized}`,
+        actionType: `legacy_provider_status_${normalized}`,
         status: normalized === 'failed' ? 'Error' : 'Done',
-        detail: normalized === 'failed' ? fields['Failure Reason'] : `Provider confirmed ${normalized} for ${providerMessageId || idempotencyKey}`,
+        detail: normalized === 'failed' ? fields['Failure Reason'] : `Legacy provider confirmed ${normalized} for ${providerMessageId || idempotencyKey}`,
       });
     }
     return { updated: true, status: normalized, delivered: normalized === 'delivered', sent: normalized === 'sent' || normalized === 'delivered' };
@@ -298,7 +278,7 @@ export function createRelayDeliveryService(overrides = {}) {
       'RELAY SMS Opted Out': true,
       'RELAY Opted Out At': when,
       'RELAY Opt-Out Source': source,
-      'RELAY Next Action': 'Customer opted out of SMS. Do not send SMS unless a compliant opt-in is recorded.',
+      'RELAY Next Action': 'Customer is marked opted out of SMS. Keep this visible for owner reference and do not prepare/send SMS unless a compliant opt-in is recorded.',
     });
     await deps.createRecord(TABLES.MESSAGES, {
       Message: `SMS opt-out — ${when}`,
@@ -309,25 +289,30 @@ export function createRelayDeliveryService(overrides = {}) {
       'Message Type': 'opt_out',
       Body: '',
       Status: 'Opted Out',
-      Provider: deps.provider?.name || 'webhook',
+      Provider: '',
       Attempt: 0,
       'Created At': when,
       'Customer Reference': customerReference(job),
       'Provider Detail': `Opt-out source: ${source}`,
+      'Send Method': '',
     });
     await deps.logActivity({ agent: 'RELAY', jobId, actionType: 'customer_sms_opted_out', status: 'Done', detail: `SMS opt-out recorded from ${source}` });
     return { optedOut: true, jobId, timestamp: when };
   }
 
-  return { createDraft, sendOwnerApprovedMessage, applyDeliveryCallback, applyOptOut };
+  return { createDraft, updateDraft, markManuallySent, applyDeliveryCallback, applyOptOut };
 }
 
 export async function createRelayDraft(args) {
   return createRelayDeliveryService().createDraft(args);
 }
 
-export async function sendOwnerApprovedMessage(args) {
-  return createRelayDeliveryService().sendOwnerApprovedMessage(args);
+export async function updateRelayDraft(args) {
+  return createRelayDeliveryService().updateDraft(args);
+}
+
+export async function markRelayManuallySent(args) {
+  return createRelayDeliveryService().markManuallySent(args);
 }
 
 export async function applyDeliveryCallback(args) {
