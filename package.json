@@ -1,0 +1,1 @@
+{"name":"ghostos-core","version":"0.1.0","type":"module","scripts":{"dev":"netlify dev"},"dependencies":{"@openai/agents":"latest","airtable":"latest","zod":"latest"},"devDependencies":{"netlify-cli":"latest"}}
