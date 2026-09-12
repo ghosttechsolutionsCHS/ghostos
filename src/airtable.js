@@ -16,6 +16,12 @@ function requireEnv(name) {
   return value;
 }
 
+function compactFields(fields) {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  );
+}
+
 export function base() {
   return new Airtable({ apiKey: requireEnv('AIRTABLE_PAT') })
     .base(requireEnv('AIRTABLE_BASE_ID'));
@@ -27,37 +33,38 @@ export async function getRecord(table, id) {
 }
 
 export async function listRecords(table, options = {}) {
-  const records = await base()(table).select({
-    maxRecords: options.maxRecords || 100,
-    view: options.view,
-    filterByFormula: options.filterByFormula,
-    sort: options.sort,
-  }).all();
+  const selectOptions = { maxRecords: options.maxRecords || 100 };
+  if (options.view) selectOptions.view = options.view;
+  if (options.filterByFormula) selectOptions.filterByFormula = options.filterByFormula;
+  if (options.sort) selectOptions.sort = options.sort;
+
+  const records = await base()(table).select(selectOptions).all();
   return records.map((record) => ({ id: record.id, fields: record.fields }));
 }
 
 export async function createRecord(table, fields) {
-  const record = await base()(table).create(fields, { typecast: true });
+  const record = await base()(table).create(compactFields(fields), { typecast: true });
   return { id: record.id, fields: record.fields };
 }
 
 export async function updateRecord(table, id, fields) {
-  const record = await base()(table).update(id, fields, { typecast: true });
+  const record = await base()(table).update(id, compactFields(fields), { typecast: true });
   return { id: record.id, fields: record.fields };
 }
 
 export async function logActivity({ agent, jobId, actionType, status = 'Done', detail = '', consequential = false }) {
   const stamp = new Date().toISOString();
-  return createRecord(TABLES.ACTIVITY, {
+  const fields = {
     Event: `${agent} — ${actionType} — ${stamp}`,
     Agent: agent,
-    Job: jobId ? [jobId] : [],
     'Action Type': actionType,
     Status: status,
     Detail: String(detail || '').slice(0, 90000),
     Consequential: Boolean(consequential),
     'Created At': stamp,
-  });
+  };
+  if (jobId) fields.Job = [jobId];
+  return createRecord(TABLES.ACTIVITY, fields);
 }
 
 export async function readActiveControls() {
@@ -75,18 +82,20 @@ export async function readActiveControls() {
 
 export async function createApproval({ type, jobId, quoteId, amount, summary, requestedAction, requestedBy = 'ATLAS' }) {
   const stamp = new Date().toISOString();
-  const record = await createRecord(TABLES.APPROVALS, {
+  const fields = {
     Approval: `${type}: ${summary}`.slice(0, 250),
     Type: type,
     Status: 'Pending',
-    Job: jobId ? [jobId] : [],
-    Quote: quoteId ? [quoteId] : [],
-    Amount: Number.isFinite(Number(amount)) ? Number(amount) : undefined,
     Summary: String(summary || ''),
     'Requested Action': String(requestedAction || ''),
     'Requested By': requestedBy,
     'Created At': stamp,
-  });
+  };
+  if (jobId) fields.Job = [jobId];
+  if (quoteId) fields.Quote = [quoteId];
+  if (amount !== undefined && amount !== null && Number.isFinite(Number(amount))) fields.Amount = Number(amount);
+
+  const record = await createRecord(TABLES.APPROVALS, fields);
   await logActivity({
     agent: requestedBy,
     jobId,
@@ -111,6 +120,7 @@ export async function getDashboardSnapshot() {
   const pendingApprovals = approvals.filter((r) => r.fields.Status === 'Pending');
   const completed = jobs.filter((r) => r.fields.Status === 'Completed');
   const activeJobs = jobs.filter((r) => !['Completed', 'Lost / Declined'].includes(r.fields.Status));
+  const researchedParts = parts.filter((r) => Boolean(r.fields['Research Status']));
   const moneyIn = cash.reduce((sum, r) => sum + Number(r.fields['Money In'] || 0), 0);
   const moneyOut = cash.reduce((sum, r) => sum + Number(r.fields['Money Out'] || 0), 0);
   const quotedPipeline = jobs.reduce((sum, r) => sum + Number(r.fields['Quoted Price'] || 0), 0);
@@ -136,7 +146,7 @@ export async function getDashboardSnapshot() {
       activeJobs: activeJobs.length,
       completedJobs: completed.length,
       pendingApprovals: pendingApprovals.length,
-      partsResearched: parts.length,
+      partsResearched: researchedParts.length,
       quotes: quotes.length,
       quotedPipeline,
       revenueCollected,
