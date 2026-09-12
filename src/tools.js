@@ -3,23 +3,20 @@ import { z } from 'zod';
 import { TABLES, createApproval, createRecord, getRecord, logActivity, readActiveControls, updateRecord } from './airtable.js';
 import { assertTransition } from './state-machine.js';
 import { createQuoteForJob } from './quotes.js';
+import { deliverRoutineMessage } from './relay-delivery.js';
 
 export const getJobTool = tool({
   name: 'get_job',
   description: 'Read the current Airtable job/lead record by Airtable record ID before making operational decisions.',
   parameters: z.object({ recordId: z.string().min(1) }),
-  async execute({ recordId }) {
-    return getRecord(TABLES.JOBS, recordId);
-  },
+  async execute({ recordId }) { return getRecord(TABLES.JOBS, recordId); },
 });
 
 export const getControlsTool = tool({
   name: 'get_business_controls',
   description: 'Read active GhostOS owner rules, operating boundaries, goals, service area, vendor and payment policies.',
   parameters: z.object({}),
-  async execute() {
-    return readActiveControls();
-  },
+  async execute() { return readActiveControls(); },
 });
 
 export const updateJobStateTool = tool({
@@ -65,6 +62,18 @@ export const saveRelayDraftTool = tool({
   },
 });
 
+export const sendRoutineMessageTool = tool({
+  name: 'send_routine_message',
+  description: 'Deliver an already-prepared routine customer message through the configured outbound provider. Only clarification, quote, follow-up, verified status update, or scheduling-question messages are eligible. Never use for consequential commitments.',
+  parameters: z.object({
+    jobId: z.string().min(1),
+    message: z.string().min(1).max(20000),
+    messageType: z.enum(['clarification','quote','follow_up','status_update','scheduling_question']),
+    channel: z.enum(['auto','sms','email']).default('auto'),
+  }),
+  async execute(args) { return deliverRoutineMessage(args); },
+});
+
 const researchedPartSchema = z.object({
   tier: z.enum(['Budget', 'Standard', 'Premium']),
   partOrSku: z.string().min(1).max(250),
@@ -83,10 +92,7 @@ const researchedPartSchema = z.object({
 export const storeSupplyResultsTool = tool({
   name: 'store_supply_results',
   description: 'Persist verified or explicitly unverified SUPPLY part research into Parts & Inventory. Never use this tool to purchase or reserve a part.',
-  parameters: z.object({
-    jobId: z.string().min(1),
-    parts: z.array(researchedPartSchema).min(1).max(3),
-  }),
+  parameters: z.object({ jobId: z.string().min(1), parts: z.array(researchedPartSchema).min(1).max(3) }),
   async execute({ jobId, parts }) {
     const stamp = new Date().toISOString();
     const created = [];
@@ -134,9 +140,7 @@ export const createQuoteTool = tool({
     pricingException: z.boolean().default(false),
     purchaseRequired: z.boolean().default(false),
   }),
-  async execute(args) {
-    return createQuoteForJob(args);
-  },
+  async execute(args) { return createQuoteForJob(args); },
 });
 
 export const requestOwnerApprovalTool = tool({
@@ -151,7 +155,5 @@ export const requestOwnerApprovalTool = tool({
     requestedAction: z.string().min(1).max(10000),
     requestedBy: z.enum(['ATLAS','SUPPLY','LEDGER','DISPATCH','RELAY']).default('ATLAS'),
   }),
-  async execute(args) {
-    return createApproval(args);
-  },
+  async execute(args) { return createApproval(args); },
 });
