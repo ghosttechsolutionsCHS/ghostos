@@ -1,3 +1,6 @@
+[build]
+  publish = "public"
+
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
@@ -5,4 +8,19 @@
 [[redirects]]
   from = "/api/ghostos"
   to = "/.netlify/functions/ghostos"
+  status = 200
+
+[[redirects]]
+  from = "/api/dashboard"
+  to = "/.netlify/functions/dashboard"
+  status = 200
+
+[[redirects]]
+  from = "/api/approval"
+  to = "/.netlify/functions/approval"
+  status = 200
+
+[[redirects]]
+  from = "/dashboard"
+  to = "/dashboard.html"
   status = 200
