@@ -1,0 +1,16 @@
+[build]
+  # No bundler/framework to compile — the site is a static health page plus
+  # serverless functions, so publishing the static folder is all that is needed.
+  publish = "public"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Friendly alias for the lead webhook. The function also stays reachable at its
+# default path, /.netlify/functions/ghostos.
+[[redirects]]
+  from = "/api/ghostos"
+  to = "/.netlify/functions/ghostos"
+  status = 200
+  force = true
