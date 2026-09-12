@@ -181,7 +181,7 @@ test('failed sends require a new explicit owner retry and remain idempotent', as
   assert.equal(first.sent, false);
   assert.equal(withoutRetry.retryRequired, true);
   assert.equal(retried.sent, true);
-  assert.equal(memory.sends, 2);
+  assert.equal(attempt, 2);
   assert.equal(memory.messages[0].fields.Attempt, 2);
 });
 
