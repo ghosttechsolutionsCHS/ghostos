@@ -1,13 +1,24 @@
 const CONFIRMED_STATUSES = new Set(['accepted', 'sent', 'delivered']);
+const SECRET_KEY_PATTERN = /(secret|token|password|authorization|api[-_]?key|credential)/i;
 
 function normalizeStatus(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function redactSecrets(value, depth = 0) {
+  if (depth > 8 || value == null) return value;
+  if (Array.isArray(value)) return value.map((item) => redactSecrets(item, depth + 1));
+  if (typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    SECRET_KEY_PATTERN.test(key) ? '[REDACTED]' : redactSecrets(item, depth + 1),
+  ]));
+}
+
 function safeProviderDetail(value) {
   if (value == null) return null;
   if (typeof value === 'string') return value.slice(0, 10000);
-  try { return JSON.stringify(value).slice(0, 10000); } catch { return '[unserializable provider detail]'; }
+  try { return JSON.stringify(redactSecrets(value)).slice(0, 10000); } catch { return '[unserializable provider detail]'; }
 }
 
 export class WebhookRelayProvider {
