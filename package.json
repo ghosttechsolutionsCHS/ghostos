@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "netlify dev",
-    "check": "node --check src/airtable.js && node --check src/state-machine.js && node --check src/quotes.js && node --check src/tools.js && node --check src/ghostos.js && node --check netlify/functions/ghostos.js && node --check netlify/functions/dashboard.js && node --check netlify/functions/approval.js",
+    "check": "node --check src/airtable.js && node --check src/state-machine.js && node --check src/quotes.js && node --check src/relay-delivery.js && node --check src/tools.js && node --check src/ghostos.js && node --check netlify/functions/ghostos.js && node --check netlify/functions/dashboard.js && node --check netlify/functions/approval.js",
     "test": "node --test"
   },
   "engines": {
