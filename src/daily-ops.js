@@ -1,5 +1,6 @@
 import { TABLES, createRecord, getDashboardSnapshot, listRecords, logActivity } from './airtable.js';
 import { buildAttentionQueue, todayLocalISO } from './operations.js';
+import { ownerTiersForJob } from './owner-tier-projection.js';
 
 const TZ = 'America/New_York';
 function n(v){const x=Number(v);return Number.isFinite(x)?x:0;}
@@ -7,8 +8,23 @@ function day(v){if(!v)return null;const d=new Date(v);if(Number.isNaN(d.getTime(
 function today(v){return day(v)===todayLocalISO();}
 function latestToday(records,cycle,date){return records.filter(r=>r.fields.Cycle===cycle&&r.fields.Date===date).sort((a,b)=>new Date(b.fields['Generated At']||0)-new Date(a.fields['Generated At']||0))[0]||null;}
 
+function withOwnerTiers(base){
+  const byJob=new Map((base.jobs||[]).map((job)=>[job.id,job]));
+  const partsQuotes=(base.partsQuotes||[]).map((row)=>{
+    const job=byJob.get(row.jobId);if(!job)return row;
+    const tiers=ownerTiersForJob(job,base.parts||[]);
+    const recommended=tiers.find((p)=>p.recommended)||tiers.find((p)=>p.tier==='Medium')||tiers[0]||null;
+    const ready=recommended?.economics?.ready?recommended.economics:null;
+    const blockers=[...(row.pricingCard?.blockers||[]),...tiers.filter((p)=>!p.economics?.ready).map((p)=>`${p.tier}: ${p.economics?.reason||'verified economics incomplete'}`)];
+    const pricingCard=row.quote?.total!=null?row.pricingCard:(ready?{...ready,ready:true,label:'Recommended Quote',blockers:[],derivedFromTier:recommended.tier}:{...row.pricingCard,ready:false,label:'QUOTE NOT READY',blockers:[...new Set(blockers)]});
+    return {...row,parts:tiers,recommendedPart:recommended,pricingCard,quoteWithheldReason:pricingCard.ready?'':pricingCard.blockers.join(' ')};
+  });
+  return {...base,partsQuotes};
+}
+
 export async function getOperationsSnapshot(){
-  const [base,dailyOps]=await Promise.all([getDashboardSnapshot(),listRecords(TABLES.DAILY_OPS,{maxRecords:90})]);
+  const [rawBase,dailyOps]=await Promise.all([getDashboardSnapshot(),listRecords(TABLES.DAILY_OPS,{maxRecords:90})]);
+  const base=withOwnerTiers(rawBase);
   const attentionQueue=buildAttentionQueue({
     jobs:base.jobs,parts:base.parts,quotes:base.quotes,approvals:base.approvals,messages:base.messages,builderRequests:base.builderRequests,
     growthWork:base.growthDivision?.work||[],growthOpportunities:base.growthDivision?.opportunities||[],marketing:base.growthDivision?.marketing||[],
@@ -30,24 +46,7 @@ export async function getOperationsSnapshot(){
   const cashIn=cashToday.reduce((s,r)=>s+n(r.fields['Money In']),0),cashOut=cashToday.reduce((s,r)=>s+n(r.fields['Money Out']),0);
   const revenueCollected=customerPaymentsToday.reduce((s,r)=>s+n(r.fields['Money In']),0);
   const completedRevenue=completedToday.reduce((s,r)=>s+n(r.fields['Revenue Collected']),0),completedGrossProfit=completedToday.reduce((s,r)=>s+n(r.fields['Gross Profit']),0);
-  const daily={
-    date,
-    newLeads:todayJobs.length,
-    jobsNeedingAction:jobsNeedingAction.length,
-    waitingCustomers:waitingCustomers.length,
-    quoteFollowups:quoteFollowups.length,
-    partBlockers:partBlockers.length,
-    appointmentsToday:appointmentsToday.length,
-    quotesPrepared:quotesToday.length,
-    jobsCompleted:completedToday.length,
-    revenueCollected,
-    grossProfitCompleted:completedGrossProfit,
-    completedRevenue,
-    cashIn,cashOut,netCash:cashIn-cashOut,
-    growthActivity:growthToday.length,
-    builderAttention:builderAttention.length,
-    ownerDecisions:ownerDecisions.length,
-  };
+  const daily={date,newLeads:todayJobs.length,jobsNeedingAction:jobsNeedingAction.length,waitingCustomers:waitingCustomers.length,quoteFollowups:quoteFollowups.length,partBlockers:partBlockers.length,appointmentsToday:appointmentsToday.length,quotesPrepared:quotesToday.length,jobsCompleted:completedToday.length,revenueCollected,grossProfitCompleted:completedGrossProfit,completedRevenue,cashIn,cashOut,netCash:cashIn-cashOut,growthActivity:growthToday.length,builderAttention:builderAttention.length,ownerDecisions:ownerDecisions.length};
   return {...base,attentionQueue,dailyOperations:{date,metrics:daily,morningBrief:latestToday(dailyOps,'Morning Brief',date),nightCloseout:latestToday(dailyOps,'Night Closeout',date),records:dailyOps.slice(0,30)}};
 }
 
