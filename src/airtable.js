@@ -185,7 +185,7 @@ export async function getDashboardSnapshot() {
       marketingRevenue: growthTotals.revenue, marketingGrossProfit: growthTotals.grossProfit, marketingProfitAfterSpend: growthTotals.profitAfterSpend, marketingCAC: growthTotals.cac,
     },
     agents,
-    growthDivision: { totals:growthTotals, work:growthWork.sort((a,b)=>new Date(b.fields['Updated At']||b.fields['Created At']||0)-new Date(a.fields['Updated At']||a.fields['Created At']||0))[0], marketing:marketing.slice(0,100), opportunities:growthOpportunities.slice(0,100) },
+    growthDivision: { totals:growthTotals, work:growthWork.sort((a,b)=>new Date(b.fields['Updated At']||b.fields['Created At']||0)-new Date(a.fields['Updated At']||a.fields['Created At']||0)).slice(0,120), marketing:marketing.slice(0,100), opportunities:growthOpportunities.slice(0,100) },
     jobs: jobs.sort((a,b)=>new Date(b.fields['Last Contacted']||0)-new Date(a.fields['Last Contacted']||0)).slice(0,100),
     quotes: quotes.slice(0,100), approvals: pendingApprovals.slice(0,50),
     messages: messages.sort((a,b)=>new Date(b.fields['Created At']||0)-new Date(a.fields['Created At']||0)).slice(0,150),
