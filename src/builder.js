@@ -1,8 +1,8 @@
-import { Agent, run, tool } from '@openai/agents';
+import { tool } from '@openai/agents';
 import { z } from 'zod';
+import { runAgent } from './ai-provider.js';
 import { TABLES, createRecord, getRecord, logActivity, updateRecord } from './airtable.js';
 
-const MODEL = process.env.GHOSTOS_MODEL || 'gpt-5.6-sol';
 const DEFAULT_REPO = 'ghosttechsolutionsCHS/ghostos';
 const PROPOSAL_PREFIX = 'builder/';
 const SECRET_PATH = /(^|\/)(\.env(?:\.|$)|.*(?:secret|credential|private[-_]?key|token).*)/i;
@@ -97,11 +97,11 @@ const savePlanTool = tool({
   },
 });
 
-export const builderAgent = new Agent({
-  name: 'BUILDER', model: MODEL,
+export const builderAgent = {
+  name: 'BUILDER',
   instructions: `You are BUILDER for GhostOS. Inspect current main and make a precise engineering plan. Never request/read secrets. Mark HIGH RISK for security/authentication, payments, spending, owner permissions, secrets, destructive data operations, migrations, contracts/purchases, or changes that could weaken approval controls. Never propose deleting Airtable tables/data automatically. Always save a grounded plan with exact likely files and verification steps.`,
   tools: [getRequestTool, listRepoFilesTool, readRepoFileTool, savePlanTool],
-});
+};
 
 function executionTools(requestId) {
   const readBranchFile = tool({
@@ -146,13 +146,13 @@ function executionTools(requestId) {
 }
 
 export async function analyzeBuilderRequest(requestId) {
-  requireEnv('OPENAI_API_KEY'); requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID'); requireEnv('GITHUB_TOKEN');
+  requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID'); requireEnv('GITHUB_TOKEN');
   const current = await getRecord(TABLES.BUILDER, requestId);
   if (['Done','Rejected'].includes(current.fields.Status)) throw new Error(`Builder request is already ${current.fields.Status}`);
   await updateRecord(TABLES.BUILDER, requestId, { Status: 'Analyzing', 'Updated At': new Date().toISOString() });
   await logActivity({ agent: 'BUILDER', actionType: 'builder_analysis_started', status: 'Running', detail: `Analyzing ${requestId}` });
   try {
-    await run(builderAgent, `Analyze Builder Request ${requestId}. Inspect current main and save the implementation plan.`, { maxTurns: 18 });
+    await runAgent(builderAgent, `Analyze Builder Request ${requestId}. Inspect current main and save the implementation plan.`, { maxTurns: 18, observerAgent: 'BUILDER' });
     await logActivity({ agent: 'BUILDER', actionType: 'builder_analysis_completed', detail: `Plan saved for ${requestId}` });
     return getRecord(TABLES.BUILDER, requestId);
   } catch (error) {
@@ -170,7 +170,7 @@ export async function confirmHighRisk(requestId) {
 }
 
 export async function createBuildProposal(requestId) {
-  requireEnv('OPENAI_API_KEY'); requireEnv('GITHUB_TOKEN');
+  requireEnv('GITHUB_TOKEN');
   const request = await getRecord(TABLES.BUILDER, requestId);
   if (!['Planned','Ready for Build','Blocked'].includes(request.fields.Status)) throw new Error('Request must be analyzed before Build Proposal');
   if (request.fields.Branch || request.fields['PR Number']) throw new Error('A proposal already exists for this request');
@@ -183,14 +183,14 @@ export async function createBuildProposal(requestId) {
   await github('/git/refs', { method: 'POST', body: { ref: `refs/heads/${branch}`, sha: main.object.sha } });
   await updateRecord(TABLES.BUILDER, requestId, { Status: 'Building', Branch: branch, 'Build Status': 'Branch Created', 'CI Status': 'Not Run', 'Owner Decision': 'Pending', 'Failure Reason': '', 'Updated At': new Date().toISOString() });
   await logActivity({ agent: 'BUILDER', actionType: 'builder_branch_created', status: 'Running', detail: `${requestId}: ${branch} from main ${main.object.sha}` });
-  const executor = new Agent({
-    name: 'BUILDER-EXECUTOR', model: MODEL,
+  const executor = {
+    name: 'BUILDER-EXECUTOR',
     instructions: `Implement the already-approved Builder Request ${requestId} on its existing builder/* branch. Read the request and relevant files before writing. Preserve unrelated behavior. Never touch secrets, .env files, GitHub workflows, environment settings, Airtable tables/data, purchases/contracts/ad spend, or main. Do not weaken authentication/approval/security. Sensitive changes are allowed only when the request is already HIGH risk and separately owner-confirmed; still preserve or strengthen controls. Use write_proposal_file for complete file contents. Do not delete files. Finish with finish_build_proposal.`,
     tools: executionTools(requestId),
-  });
+  };
   try {
     await updateRecord(TABLES.BUILDER, requestId, { 'Build Status': 'Writing Changes', 'Updated At': new Date().toISOString() });
-    await run(executor, `Implement Builder Request ${requestId} according to its saved Implementation Plan. Make the minimum safe code changes on the proposal branch and save a build summary.`, { maxTurns: 30 });
+    await runAgent(executor, `Implement Builder Request ${requestId} according to its saved Implementation Plan. Make the minimum safe code changes on the proposal branch and save a build summary.`, { maxTurns: 30, observerAgent: 'BUILDER' });
     return await openOrRefreshProposal(requestId);
   } catch (error) {
     await updateRecord(TABLES.BUILDER, requestId, { Status: 'Blocked', 'Build Status': 'Failed', 'Failure Reason': safeDetail(error?.message || error), 'Updated At': new Date().toISOString() });
