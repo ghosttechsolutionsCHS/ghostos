@@ -10,7 +10,7 @@
   },
   "engines": { "node": ">=20" },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.119.0",
+    "@anthropic-ai/sdk": "0.125.0",
     "@openai/agents": "0.18.0",
     "airtable": "0.12.2",
     "twilio": "6.1.1",
