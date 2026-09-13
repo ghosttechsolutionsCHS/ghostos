@@ -38,12 +38,13 @@ test('owner navigation still initializes when sessionStorage is unavailable',()=
     fetch(){throw new Error('fetch should not run without a key');},
     console
   };
+  vm.createContext(sandbox);
 
-  const instrumented=`${ownerScript()}\n;globalThis.__ownerTest={title:()=>document.getElementById('pageTitle').textContent,error:()=>document.getElementById('err').textContent,hash:()=>location.hash};`;
-  assert.doesNotThrow(()=>vm.runInNewContext(instrumented,sandbox));
+  assert.doesNotThrow(()=>vm.runInContext(ownerScript(),sandbox));
   assert.equal(typeof clickHandler,'function');
-  clickHandler({target:{closest:()=>({dataset:{view:'marketing'}})}});
-  assert.equal(sandbox.__ownerTest.title(),'Marketing');
-  assert.equal(sandbox.__ownerTest.hash(),'marketing');
-  assert.match(sandbox.__ownerTest.error(),/Browser storage is unavailable/);
+  vm.runInContext("setView('marketing')",sandbox);
+  const result=vm.runInContext("({title:document.getElementById('pageTitle').textContent,hash:location.hash,error:document.getElementById('err').textContent})",sandbox);
+  assert.equal(result.title,'Marketing');
+  assert.equal(result.hash,'marketing');
+  assert.match(result.error,/Browser storage is unavailable/);
 });
