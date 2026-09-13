@@ -1,3 +1,5 @@
+import { createWindsorMarketingReader, summarizeGoogleAds } from './windsor-marketing.js';
+
 function n(value) { const x = Number(value); return Number.isFinite(x) ? x : 0; }
 function text(value) { return value == null ? '' : String(value); }
 
@@ -30,19 +32,32 @@ export function normalizeMarketingRows(rows = []) {
   return { campaignMetrics, channelMetrics };
 }
 
+function snapshotFromConnectedWindsor(windsor) {
+  const paid=summarizeGoogleAds(windsor.sources.googleAds);
+  const campaignMetrics=paid.campaigns.map(c=>({id:c.id,provider:'windsor',channel:'Google Ads',platform:'Google Ads',campaign:c.name,spend:c.spend,leads:c.conversions,completedJobs:0,revenue:c.conversionValue,grossProfit:0,costPerLead:c.conversions>0?c.spend/c.conversions:null,cac:null,profitAfterSpend:null,rawAvailable:true,jobEconomicsPending:true}));
+  const channelMetrics=paid.available?[{channel:'Google Ads',spend:paid.spend,leads:paid.conversions,completedJobs:0,revenue:paid.conversionValue,grossProfit:0,costPerLead:paid.conversions>0?paid.spend/paid.conversions:null,cac:null,profitAfterSpend:null,jobEconomicsPending:true}]:[];
+  const statuses=Object.fromEntries(Object.entries(windsor.sources).map(([name,s])=>[name,{available:s.available,rowCount:s.rows.length,error:s.error}]));
+  return {source:{provider:'windsor',configured:windsor.configured,fetchedAt:windsor.fetchedAt,error:null},snapshots:[{capturedAt:windsor.fetchedAt,sources:statuses}],channelMetrics,campaignMetrics,attribution:[],recommendations:[],agentActivity:[],rawSources:windsor.sources};
+}
+
 export function summarizeMarketingSnapshot(snapshot = {}) {
   const channels = snapshot.channelMetrics || [], campaigns = snapshot.campaignMetrics || [];
-  if (!snapshot.source?.configured) return 'Windsor.ai is not configured yet; no live marketing metrics are available.';
+  if (!snapshot.source?.configured) return 'Windsor.ai is not configured in the GhostOS runtime; no live marketing metrics are available.';
   if (snapshot.source?.error) return `Windsor.ai is configured but the latest read failed: ${snapshot.source.error}`;
+  if(!channels.length)return 'Windsor is connected, but no paid campaign rows are available in the selected window. Do not infer spend, CAC, or profitability from missing data.';
   const totals = channels.reduce((a,r)=>({spend:a.spend+n(r.spend),leads:a.leads+n(r.leads),completed:a.completed+n(r.completedJobs),revenue:a.revenue+n(r.revenue),grossProfit:a.grossProfit+n(r.grossProfit)}),{spend:0,leads:0,completed:0,revenue:0,grossProfit:0});
-  const best = [...campaigns].sort((a,b)=>n(b.profitAfterSpend)-n(a.profitAfterSpend))[0];
-  return `Windsor live: spend $${totals.spend.toFixed(2)} → ${totals.leads} leads → ${totals.completed} completed jobs → $${totals.revenue.toFixed(2)} revenue → $${totals.grossProfit.toFixed(2)} gross profit${best ? `; best current campaign by profit after spend: ${best.campaign || best.id} ($${n(best.profitAfterSpend).toFixed(2)})` : ''}.`;
+  const best = [...campaigns].filter(x=>x.profitAfterSpend!=null).sort((a,b)=>n(b.profitAfterSpend)-n(a.profitAfterSpend))[0];
+  return `Windsor live: spend $${totals.spend.toFixed(2)} → ${totals.leads} platform conversions → ${totals.completed} attributed completed jobs → $${totals.revenue.toFixed(2)} platform conversion value → $${totals.grossProfit.toFixed(2)} attributed GhostOS gross profit${best ? `; best current campaign by profit after spend: ${best.campaign || best.id} ($${n(best.profitAfterSpend).toFixed(2)})` : '; completed-job economics require GhostOS attribution before profitability can be claimed'}.`;
 }
 
 export function createMarketingDataService({ env = process.env, fetchImpl = fetch } = {}) {
   const endpoint = String(env.WINDSOR_API_URL || '').trim(), apiKey = String(env.WINDSOR_API_KEY || '').trim();
   const safeError = (error) => String(error?.message || 'Windsor read failed').replaceAll(apiKey || '\u0000','[REDACTED]').replaceAll(endpoint || '\u0000','[WINDSOR_ENDPOINT]').slice(0,500);
-  return { provider: 'windsor', configured: Boolean(endpoint), async snapshot() {
+  return { provider: 'windsor', configured: Boolean(endpoint || apiKey), async snapshot() {
+    if(!endpoint && apiKey){
+      try{return snapshotFromConnectedWindsor(await createWindsorMarketingReader({env,fetchImpl}).snapshot())}
+      catch(error){return emptyMarketingSnapshot({configured:true,error:safeError(error)})}
+    }
     if (!endpoint) return emptyMarketingSnapshot({ configured: false });
     try {
       const headers = { accept: 'application/json' }; if (apiKey) headers.authorization = `Bearer ${apiKey}`;
