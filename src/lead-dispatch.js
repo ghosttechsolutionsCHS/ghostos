@@ -54,11 +54,15 @@ export function createLeadDispatcher(overrides = {}) {
 
   async function reconcileExisting(job, messages, attempt) {
     const existing = meaningfulMessage(messages, job.id);
-    if (existing) return markProcessed(job.id, `Dispatcher found existing RELAY message ${existing.id}; no duplicate processing performed.`, attempt);
+    if (existing) {
+      if (job.fields['GhostOS Dispatch Status'] === 'Processed') return { processed:true, duplicate:true, jobId:job.id, existingMessageId:existing.id };
+      return markProcessed(job.id, `Dispatcher found existing RELAY message ${existing.id}; no duplicate processing performed.`, attempt);
+    }
 
     const reply = String(job.fields['RELAY Reply Draft'] || '').trim();
     if (reply) {
       if (job.fields['RELAY SMS Opted Out']) {
+        if (job.fields['GhostOS Dispatch Status'] === 'Processed') return { processed:true, duplicate:true, jobId:job.id };
         return markProcessed(job.id, 'Existing RELAY reply text was found, but SMS is opted out. No new SMS draft was created.', attempt);
       }
       const draft = await deps.createRelayDraft({ jobId:job.id, message:reply, messageType:inferRecoveredType(job), channel:'auto' });
@@ -66,13 +70,17 @@ export function createLeadDispatcher(overrides = {}) {
       return markProcessed(job.id, `Recovered pre-existing RELAY reply into message ledger ${draft.id}; no duplicate agent run required.`, attempt);
     }
 
-    if (job.fields.Status !== 'New Lead') return markProcessed(job.id, `Lead already advanced to ${job.fields.Status}; no duplicate processing performed.`, attempt);
+    if (job.fields.Status !== 'New Lead') {
+      if (job.fields['GhostOS Dispatch Status'] === 'Processed') return { processed:true, duplicate:true, jobId:job.id };
+      return markProcessed(job.id, `Lead already advanced to ${job.fields.Status}; no duplicate processing performed.`, attempt);
+    }
     return null;
   }
 
   async function dispatchLead(jobId, { force = false, source = 'automatic' } = {}) {
     let job = await deps.getRecord(TABLES.JOBS, jobId);
     if (!job) throw new Error('Lead not found');
+    if (processingIsFresh(job)) return { processed:false, skipped:true, reason:'Already processing' };
     if (job.fields.Status !== 'New Lead' && !force) return { processed:false, skipped:true, reason:`Status is ${job.fields.Status}` };
 
     const attempt = n(job.fields['GhostOS Dispatch Attempt']) + 1;
@@ -81,7 +89,6 @@ export function createLeadDispatcher(overrides = {}) {
     if (reconciled) return { ...reconciled, reconciled:true };
 
     if (!force && job.fields['GhostOS Dispatch Status'] === 'Processed') return { processed:false, skipped:true, reason:'Already processed' };
-    if (!force && processingIsFresh(job)) return { processed:false, skipped:true, reason:'Already processing' };
 
     const started = deps.now();
     await deps.updateRecord(TABLES.JOBS, jobId, {
