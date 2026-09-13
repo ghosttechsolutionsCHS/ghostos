@@ -67,7 +67,6 @@ export function createSupplyStore(overrides = {}) {
         Device: part.device,
         'Part Type': part.partType,
         Vendor: part.vendor,
-        'Vendor URL': part.vendorUrl,
         'Purchase Status': 'Researching',
         'Research Tier': part.tier,
         'Research Status': part.verified ? 'Verified' : 'Unverified',
@@ -76,6 +75,7 @@ export function createSupplyStore(overrides = {}) {
         Recommended: part.recommended,
         Notes: part.notes,
       };
+      if (part.vendorUrl) fields['Vendor URL'] = part.vendorUrl;
       if (part.unitCost !== null) fields['Unit Cost'] = part.unitCost;
       if (part.shipping !== null) fields.Shipping = part.shipping;
 
