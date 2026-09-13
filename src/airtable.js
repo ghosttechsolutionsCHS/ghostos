@@ -10,6 +10,9 @@ export const TABLES = Object.freeze({
   CASH: 'Cash & Storefront',
   CONTROL: 'GhostOS Control',
   BUILDER: 'Builder Requests',
+  MARKETING: 'Marketing Channels',
+  GROWTH: 'Growth Opportunities',
+  GROWTH_WORK: 'Growth Work',
 });
 
 function requireEnv(name) {
@@ -90,17 +93,25 @@ export async function createApproval({ type, jobId, quoteId, amount, summary, re
   return record;
 }
 
+function n(value) { const number = Number(value); return Number.isFinite(number) ? number : 0; }
+function latestByAgent(records, agent) {
+  return records.filter((r) => r.fields.Agent === agent).sort((a,b)=>new Date(b.fields['Created At']||0)-new Date(a.fields['Created At']||0))[0];
+}
+
 export async function getDashboardSnapshot() {
-  const [jobs, parts, quotes, approvals, activity, cash, messages, controls, builderRequests] = await Promise.all([
+  const [jobs, parts, quotes, approvals, activity, cash, messages, controls, builderRequests, marketing, growthOpportunities, growthWork] = await Promise.all([
     listRecords(TABLES.JOBS, { maxRecords: 300 }),
     listRecords(TABLES.PARTS, { maxRecords: 300 }),
     listRecords(TABLES.QUOTES, { maxRecords: 300 }),
     listRecords(TABLES.APPROVALS, { maxRecords: 200 }),
-    listRecords(TABLES.ACTIVITY, { maxRecords: 200 }),
+    listRecords(TABLES.ACTIVITY, { maxRecords: 350 }),
     listRecords(TABLES.CASH, { maxRecords: 500 }),
     listRecords(TABLES.MESSAGES, { maxRecords: 300 }),
     listRecords(TABLES.CONTROL, { maxRecords: 200 }),
     listRecords(TABLES.BUILDER, { maxRecords: 200 }),
+    listRecords(TABLES.MARKETING, { maxRecords: 200 }),
+    listRecords(TABLES.GROWTH, { maxRecords: 200 }),
+    listRecords(TABLES.GROWTH_WORK, { maxRecords: 250 }),
   ]);
 
   const pendingApprovals = approvals.filter((r) => r.fields.Status === 'Pending');
@@ -109,22 +120,34 @@ export async function getDashboardSnapshot() {
   const activeJobs = jobs.filter((r) => !['Completed', 'Lost / Declined'].includes(r.fields.Status));
   const newLeads = jobs.filter((r) => ['New Lead', 'Need Quote'].includes(r.fields.Status));
   const researchedParts = parts.filter((r) => Boolean(r.fields['Research Status']));
-  const moneyIn = cash.reduce((sum, r) => sum + Number(r.fields['Money In'] || 0), 0);
-  const moneyOut = cash.reduce((sum, r) => sum + Number(r.fields['Money Out'] || 0), 0);
-  const quotedPipeline = activeJobs.reduce((sum, r) => sum + Number(r.fields['Quoted Price'] || 0), 0);
-  const revenueCollected = jobs.reduce((sum, r) => sum + Number(r.fields['Revenue Collected'] || 0), 0);
-  const partsCost = jobs.reduce((sum, r) => sum + Number(r.fields['Parts Cost'] || 0), 0);
-  const grossProfit = jobs.reduce((sum, r) => sum + Number(r.fields['Gross Profit'] || 0), 0);
+  const moneyIn = cash.reduce((sum, r) => sum + n(r.fields['Money In']), 0);
+  const moneyOut = cash.reduce((sum, r) => sum + n(r.fields['Money Out']), 0);
+  const quotedPipeline = activeJobs.reduce((sum, r) => sum + n(r.fields['Quoted Price']), 0);
+  const revenueCollected = jobs.reduce((sum, r) => sum + n(r.fields['Revenue Collected']), 0);
+  const partsCost = jobs.reduce((sum, r) => sum + n(r.fields['Parts Cost']), 0);
+  const grossProfit = jobs.reduce((sum, r) => sum + n(r.fields['Gross Profit']), 0);
   const relayDrafts = messages.filter((r) => ['Pending', 'Failed', 'Blocked'].includes(r.fields.Status));
   const builderOpen = builderRequests.filter((r) => !['Done', 'Rejected'].includes(r.fields.Status));
   const completionRate = jobs.length ? completed.length / Math.max(1, completed.length + lost.length) : 0;
-  const avgTicket = completed.length ? completed.reduce((sum, r) => sum + Number(r.fields['Revenue Collected'] || 0), 0) / completed.length : 0;
+  const avgTicket = completed.length ? completed.reduce((sum, r) => sum + n(r.fields['Revenue Collected']), 0) / completed.length : 0;
+  const growthTotals = marketing.reduce((a,r)=>({ spend:a.spend+n(r.fields.Spend), leads:a.leads+n(r.fields.Leads), completedJobs:a.completedJobs+n(r.fields['Completed Jobs']), revenue:a.revenue+n(r.fields.Revenue), grossProfit:a.grossProfit+n(r.fields['Gross Contribution']) }), {spend:0,leads:0,completedJobs:0,revenue:0,grossProfit:0});
+  growthTotals.profitAfterSpend = growthTotals.grossProfit - growthTotals.spend;
+  growthTotals.cac = growthTotals.completedJobs > 0 ? growthTotals.spend / growthTotals.completedJobs : null;
 
-  const agentNames = ['ATLAS', 'RELAY', 'SUPPLY', 'LEDGER', 'DISPATCH', 'BUILDER'];
+  const agentNames = ['ATLAS','FORGE','ECHO','SCOUT','BEACON','RELAY','SUPPLY','DISPATCH','LEDGER','HORIZON','BUILDER'];
   const agents = agentNames.map((name) => {
-    const recent = activity.filter((r) => r.fields.Agent === name)
-      .sort((a, b) => new Date(b.fields['Created At'] || 0) - new Date(a.fields['Created At'] || 0))[0];
-    return { name, status: recent?.fields.Status || 'Idle', lastAction: recent?.fields['Action Type'] || null, detail: recent?.fields.Detail || null, at: recent?.fields['Created At'] || null };
+    const recent = latestByAgent(activity, name);
+    const growth = growthWork.filter((r)=>r.fields.Agent===name).sort((a,b)=>new Date(b.fields['Updated At']||b.fields['Created At']||0)-new Date(a.fields['Updated At']||a.fields['Created At']||0))[0];
+    const pendingOwner = pendingApprovals.some((a)=>a.fields['Requested By']===name);
+    const activityAge = recent ? Date.now() - new Date(recent.fields['Created At']||0).getTime() : Infinity;
+    let status = 'Idle';
+    if (pendingOwner || growth?.fields.Status === 'Needs Owner' || recent?.fields.Status === 'Blocked') status = 'Needs Owner';
+    else if (recent?.fields.Status === 'Running' && activityAge < 60*60*1000) status = 'Working';
+    else if (growth && ['Draft','Ready for Owner'].includes(growth.fields.Status)) status = 'Waiting';
+    const currentTask = growth?.fields['Current Task'] || (recent?.fields.Status === 'Running' ? recent.fields['Action Type'] : null);
+    const latestResult = growth?.fields['Latest Result'] || (recent?.fields.Status !== 'Running' ? recent?.fields.Detail : null);
+    const nextAction = growth?.fields['Next Action'] || null;
+    return { name, status, currentTask, latestResult, nextAction, lastAction: recent?.fields['Action Type'] || null, lastActivity: recent?.fields['Created At'] || null };
   });
 
   return {
@@ -134,16 +157,17 @@ export async function getDashboardSnapshot() {
       pendingApprovals: pendingApprovals.length, relayDrafts: relayDrafts.length, builderOpen: builderOpen.length,
       partsResearched: researchedParts.length, quotes: quotes.length, quotedPipeline, revenueCollected, partsCost, grossProfit,
       cashIn: moneyIn, cashOut: moneyOut, netCash: moneyIn - moneyOut, completionRate, avgTicket,
+      growthWork: growthWork.length, marketingSpend: growthTotals.spend, marketingLeads: growthTotals.leads, marketingCompletedJobs: growthTotals.completedJobs,
+      marketingRevenue: growthTotals.revenue, marketingGrossProfit: growthTotals.grossProfit, marketingProfitAfterSpend: growthTotals.profitAfterSpend, marketingCAC: growthTotals.cac,
     },
     agents,
+    growthDivision: { totals:growthTotals, work:growthWork.sort((a,b)=>new Date(b.fields['Updated At']||b.fields['Created At']||0)-new Date(a.fields['Updated At']||a.fields['Created At']||0)).slice(0,120), marketing:marketing.slice(0,100), opportunities:growthOpportunities.slice(0,100) },
     jobs: jobs.sort((a,b)=>new Date(b.fields['Last Contacted']||0)-new Date(a.fields['Last Contacted']||0)).slice(0,100),
-    quotes: quotes.slice(0,100),
-    approvals: pendingApprovals.slice(0,50),
+    quotes: quotes.slice(0,100), approvals: pendingApprovals.slice(0,50),
     messages: messages.sort((a,b)=>new Date(b.fields['Created At']||0)-new Date(a.fields['Created At']||0)).slice(0,150),
-    parts: parts.sort((a,b)=>new Date(b.fields['Researched At']||0)-new Date(a.fields['Researched At']||0)).slice(0,150),
-    cash: cash.slice(0,150),
+    parts: parts.sort((a,b)=>new Date(b.fields['Researched At']||0)-new Date(a.fields['Researched At']||0)).slice(0,150), cash: cash.slice(0,150),
     controls: controls.filter((r)=>r.fields.Active !== false).slice(0,100),
     builderRequests: builderRequests.sort((a,b)=>new Date(b.fields['Updated At']||b.fields['Created At']||0)-new Date(a.fields['Updated At']||a.fields['Created At']||0)).slice(0,100),
-    activity: activity.sort((a,b)=>new Date(b.fields['Created At']||0)-new Date(a.fields['Created At']||0)).slice(0,100),
+    activity: activity.sort((a,b)=>new Date(b.fields['Created At']||0)-new Date(a.fields['Created At']||0)).slice(0,150),
   };
 }
