@@ -7,33 +7,108 @@ import { getExternalMarketingSnapshot, summarizeMarketingSnapshot } from './mark
 const GROWTH_AGENTS = ['FORGE','ECHO','SCOUT','BEACON','HORIZON'];
 function num(value) { const n = Number(value); return Number.isFinite(n) ? n : 0; }
 function clean(value, max = 30000) { return String(value || '').slice(0, max); }
-function totalsFromChannels(channels = []) { return channels.reduce((a,c)=>({spend:a.spend+num(c.spend),leads:a.leads+num(c.leads),completedJobs:a.completedJobs+num(c.completedJobs),revenue:a.revenue+num(c.revenue),grossProfit:a.grossProfit+num(c.grossProfit),profitAfterSpend:a.profitAfterSpend+num(c.profitAfterSpend)}),{spend:0,leads:0,completedJobs:0,revenue:0,grossProfit:0,profitAfterSpend:0}); }
-
-export async function getGrowthSnapshot() {
-  const [channels,jobs,opportunities,work,externalMarketing]=await Promise.all([
-    listRecords(TABLES.MARKETING,{maxRecords:200}),listRecords(TABLES.JOBS,{maxRecords:500}),listRecords(TABLES.GROWTH,{maxRecords:250}),listRecords(TABLES.GROWTH_WORK,{maxRecords:250}),getExternalMarketingSnapshot(),
-  ]);
-  const storedChannels=channels.map((row)=>{const f=row.fields||{},spend=num(f.Spend),leads=num(f.Leads),completedJobs=num(f['Completed Jobs']),revenue=num(f.Revenue),grossProfit=num(f['Gross Contribution']),cac=completedJobs>0?spend/completedJobs:null,profitAfterSpend=grossProfit-spend;return{id:row.id,source:'airtable',channel:f['Channel / Campaign']||row.id,platform:f.Platform||'',paidOrFree:f['Paid or Free']||'',status:f.Status||'',spend,leads,bookings:num(f.Bookings),completedJobs,revenue,grossProfit,cac,costPerLead:leads>0?spend/leads:null,profitAfterSpend,profitable:completedJobs>0?profitAfterSpend>0:null,nextAction:f['Next Action']||'',learnings:f.Learnings||''};});
-  const completedJobs=jobs.filter((j)=>j.fields.Status==='Completed');
-  const attribution=jobs.slice(0,300).map((j)=>({id:j.id,status:j.fields.Status,leadSource:j.fields['Lead Source']||'',utmSource:j.fields['UTM Source']||'',utmMedium:j.fields['UTM Medium']||'',utmCampaign:j.fields['UTM Campaign']||'',revenue:num(j.fields['Revenue Collected']),grossProfit:num(j.fields['Gross Profit'])}));
-  const liveChannels=externalMarketing.channelMetrics||[];
-  const marketingData={source:externalMarketing.source,snapshots:externalMarketing.snapshots||[],channelMetrics:liveChannels,campaignMetrics:externalMarketing.campaignMetrics||[],attribution:externalMarketing.attribution?.length?externalMarketing.attribution:attribution,recommendations:externalMarketing.recommendations||[],agentActivity:externalMarketing.agentActivity||[],totals:totalsFromChannels(liveChannels),summary:summarizeMarketingSnapshot(externalMarketing)};
-  return {summary:marketingData.summary,channels:storedChannels,totals:totalsFromChannels(storedChannels),attribution,business:{totalJobs:jobs.length,completedJobs:completedJobs.length,completedRevenue:completedJobs.reduce((s,j)=>s+num(j.fields['Revenue Collected']),0),completedGrossProfit:completedJobs.reduce((s,j)=>s+num(j.fields['Gross Profit']),0)},opportunities:opportunities.slice(0,100),work:work.slice(0,120),marketingData};
+function totalsFromChannels(channels = []) {
+  return channels.reduce((a, c) => ({
+    spend: a.spend + num(c.spend), leads: a.leads + num(c.leads), completedJobs: a.completedJobs + num(c.completedJobs),
+    revenue: a.revenue + num(c.revenue), grossProfit: a.grossProfit + num(c.grossProfit), profitAfterSpend: a.profitAfterSpend + num(c.profitAfterSpend),
+  }), { spend:0, leads:0, completedJobs:0, revenue:0, grossProfit:0, profitAfterSpend:0 });
 }
 
-export const getGrowthDataTool = tool({name:'get_growth_data',description:'Read the concise Growth Division summary plus stored Ghost Tech marketing channels, provider-neutral Windsor marketing snapshots when configured, attribution, completed-job economics, growth opportunities and Growth Work. Missing external data remains explicitly absent; no external action occurs.',parameters:z.object({}),async execute(){return getGrowthSnapshot();}});
+export async function getGrowthSnapshot() {
+  const [channels, jobs, opportunities, work, externalMarketing] = await Promise.all([
+    listRecords(TABLES.MARKETING, { maxRecords: 200 }), listRecords(TABLES.JOBS, { maxRecords: 500 }),
+    listRecords(TABLES.GROWTH, { maxRecords: 250 }), listRecords(TABLES.GROWTH_WORK, { maxRecords: 250 }), getExternalMarketingSnapshot(),
+  ]);
+  const storedChannels = channels.map((row) => {
+    const f = row.fields || {};
+    const spend = num(f.Spend), leads = num(f.Leads), completedJobs = num(f['Completed Jobs']);
+    const revenue = num(f.Revenue), grossProfit = num(f['Gross Contribution']);
+    const cac = completedJobs > 0 ? spend / completedJobs : null;
+    const profitAfterSpend = grossProfit - spend;
+    return {
+      id: row.id, source: 'airtable', channel: f['Channel / Campaign'] || row.id, platform: f.Platform || '', paidOrFree: f['Paid or Free'] || '', status: f.Status || '',
+      spend, leads, bookings: num(f.Bookings), completedJobs, revenue, grossProfit, cac, costPerLead: leads > 0 ? spend / leads : null,
+      profitAfterSpend, profitable: completedJobs > 0 ? profitAfterSpend > 0 : null, nextAction: f['Next Action'] || '', learnings: f.Learnings || '',
+    };
+  });
+  const completedJobs = jobs.filter((j) => j.fields.Status === 'Completed');
+  const attribution = jobs.slice(0, 300).map((j) => ({
+    id:j.id, status:j.fields.Status, leadSource:j.fields['Lead Source'] || '', utmSource:j.fields['UTM Source'] || '',
+    utmMedium:j.fields['UTM Medium'] || '', utmCampaign:j.fields['UTM Campaign'] || '', revenue:num(j.fields['Revenue Collected']), grossProfit:num(j.fields['Gross Profit']),
+  }));
+  const liveChannels = externalMarketing.channelMetrics || [];
+  const marketingData = {
+    source: externalMarketing.source, snapshots: externalMarketing.snapshots || [], channelMetrics: liveChannels,
+    campaignMetrics: externalMarketing.campaignMetrics || [], attribution: externalMarketing.attribution?.length ? externalMarketing.attribution : attribution,
+    recommendations: externalMarketing.recommendations || [], agentActivity: externalMarketing.agentActivity || [],
+    totals: totalsFromChannels(liveChannels), summary: summarizeMarketingSnapshot(externalMarketing),
+  };
+  return {
+    summary: marketingData.summary, channels: storedChannels, totals: totalsFromChannels(storedChannels), attribution,
+    business: { totalJobs: jobs.length, completedJobs: completedJobs.length, completedRevenue: completedJobs.reduce((s,j)=>s+num(j.fields['Revenue Collected']),0), completedGrossProfit: completedJobs.reduce((s,j)=>s+num(j.fields['Gross Profit']),0) },
+    opportunities: opportunities.slice(0,100), work: work.slice(0,120), marketingData,
+  };
+}
 
-export const saveGrowthWorkTool = tool({
-  name:'save_growth_work',description:'Save a Growth Division analysis, content/outreach draft, SEO recommendation, or partnership brief for owner review. This never publishes, messages, spends, signs, or changes an external system.',
-  parameters:z.object({agent:z.enum(GROWTH_AGENTS),workType:z.enum(['Marketing Analysis','Content Draft','Content Calendar','Free Acquisition','SEO / Website','Partnership Brief','Outreach Draft','Executive Input']),title:z.string().min(3).max(250),currentTask:z.string().max(10000).optional(),latestResult:z.string().min(1).max(30000),nextAction:z.string().max(10000).optional(),evidence:z.string().max(30000).optional(),draftContent:z.string().max(30000).optional(),channelOrPartner:z.string().max(500).optional(),urlOrContact:z.string().url().optional(),leads:z.number().nonnegative().optional(),completedJobs:z.number().nonnegative().optional(),revenue:z.number().optional(),grossProfit:z.number().optional(),spend:z.number().nonnegative().optional(),cac:z.number().nonnegative().nullable().optional(),profitAfterSpend:z.number().optional(),ownerApprovalRequired:z.boolean().default(false),approvalType:z.enum(['Ad Spend','Contract','Other']).optional(),requestedAction:z.string().max(10000).optional()}),
-  async execute(args){const now=new Date().toISOString();const record=await createRecord(TABLES.GROWTH_WORK,{'Growth Item':args.title,Agent:args.agent,'Work Type':args.workType,Status:args.ownerApprovalRequired?'Needs Owner':'Ready for Owner','Current Task':args.currentTask||'','Latest Result':args.latestResult,'Next Action':args.nextAction||'','Evidence / Context':args.evidence||'','Draft Content':args.draftContent||'','Channel / Partner':args.channelOrPartner||'','URL / Contact':args.urlOrContact,Leads:args.leads,'Completed Jobs':args.completedJobs,Revenue:args.revenue,'Gross Profit':args.grossProfit,Spend:args.spend,CAC:args.cac===null?undefined:args.cac,'Profit After Spend':args.profitAfterSpend,'Owner Approval Required':args.ownerApprovalRequired,'Created At':now,'Updated At':now});await logActivity({agent:args.agent,actionType:'growth_work_saved',status:args.ownerApprovalRequired?'Blocked':'Done',detail:`${args.workType}: ${args.title}${args.nextAction?` | next: ${clean(args.nextAction,1000)}`:''}`,consequential:args.ownerApprovalRequired});if(args.ownerApprovalRequired)await createApproval({type:args.approvalType||'Other',summary:`${args.agent}: ${args.title}`,requestedAction:args.requestedAction||args.nextAction||'Review the consequential growth recommendation.',requestedBy:args.agent});return{id:record.id,status:record.fields.Status,externalActionTaken:false};}
+export const getGrowthDataTool = tool({
+  name: 'get_growth_data',
+  description: 'Read the concise Growth Division summary plus stored Ghost Tech marketing channels, provider-neutral Windsor marketing snapshots when configured, attribution, completed-job economics, growth opportunities and Growth Work. Missing external data remains explicitly absent; no external action occurs.',
+  parameters: z.object({}),
+  async execute() { return getGrowthSnapshot(); },
 });
 
-export const beaconBuilderTool=tool({name:'queue_site_builder_request',description:'Queue a technical website/SEO implementation request into existing BUILDER controls. This does not modify production; BUILDER v2/v3 approval/branch/CI/merge guardrails remain in force.',parameters:z.object({goal:z.string().min(5).max(20000),context:z.string().max(30000).optional(),priority:z.enum(['Critical','High','Normal','Low']).default('Normal')}),async execute({goal,context,priority}){const request=await createBuilderRequest({goal,context,priority,requestedBy:'BEACON'});await logActivity({agent:'BEACON',actionType:'site_builder_request_queued',detail:`Builder Request ${request.id}: ${clean(goal,800)}`});return{requestId:request.id,productionChanged:false};}});
+export const saveGrowthWorkTool = tool({
+  name: 'save_growth_work',
+  description: 'Save a Growth Division analysis, content/outreach draft, SEO recommendation, or partnership brief for owner review. This never publishes, messages, spends, signs, or changes an external system.',
+  parameters: z.object({
+    agent: z.enum(GROWTH_AGENTS), workType: z.enum(['Marketing Analysis','Content Draft','Content Calendar','Free Acquisition','SEO / Website','Partnership Brief','Outreach Draft','Executive Input']),
+    title: z.string().min(3).max(250), currentTask: z.string().max(10000).optional(), latestResult: z.string().min(1).max(30000), nextAction: z.string().max(10000).optional(), evidence: z.string().max(30000).optional(), draftContent: z.string().max(30000).optional(), channelOrPartner: z.string().max(500).optional(), urlOrContact: z.string().url().optional(),
+    leads: z.number().nonnegative().optional(), completedJobs: z.number().nonnegative().optional(), revenue: z.number().optional(), grossProfit: z.number().optional(), spend: z.number().nonnegative().optional(), cac: z.number().nonnegative().nullable().optional(), profitAfterSpend: z.number().optional(),
+    ownerApprovalRequired: z.boolean().default(false), approvalType: z.enum(['Ad Spend','Contract','Other']).optional(), requestedAction: z.string().max(10000).optional(),
+  }),
+  async execute(args) {
+    const now = new Date().toISOString();
+    const record = await createRecord(TABLES.GROWTH_WORK, {
+      'Growth Item':args.title, Agent:args.agent, 'Work Type':args.workType, Status:args.ownerApprovalRequired?'Needs Owner':'Ready for Owner',
+      'Current Task':args.currentTask||'', 'Latest Result':args.latestResult, 'Next Action':args.nextAction||'', 'Evidence / Context':args.evidence||'', 'Draft Content':args.draftContent||'', 'Channel / Partner':args.channelOrPartner||'', 'URL / Contact':args.urlOrContact,
+      Leads:args.leads, 'Completed Jobs':args.completedJobs, Revenue:args.revenue, 'Gross Profit':args.grossProfit, Spend:args.spend, CAC:args.cac===null?undefined:args.cac, 'Profit After Spend':args.profitAfterSpend,
+      'Owner Approval Required':args.ownerApprovalRequired, 'Created At':now, 'Updated At':now,
+    });
+    await logActivity({ agent:args.agent, actionType:'growth_work_saved', status:args.ownerApprovalRequired?'Blocked':'Done', detail:`${args.workType}: ${args.title}${args.nextAction?` | next: ${clean(args.nextAction,1000)}`:''}`, consequential:args.ownerApprovalRequired });
+    if (args.ownerApprovalRequired) await createApproval({ type:args.approvalType||'Other', summary:`${args.agent}: ${args.title}`, requestedAction:args.requestedAction||args.nextAction||'Review the consequential growth recommendation.', requestedBy:args.agent });
+    return { id:record.id, status:record.fields.Status, externalActionTaken: false };
+  },
+});
 
-export const forge={name:'FORGE',tools:[getGrowthDataTool,saveGrowthWorkTool],instructions:`You are FORGE, Paid Acquisition for Ghost Tech Solutions. Analyze only connected or stored marketing/ad performance supplied by get_growth_data. Focus on spend, leads, completed jobs, cost per lead, CAC, revenue, gross profit and profit after spend by channel/campaign. Optimize for profitable completed jobs, never clicks alone. Make missing Windsor/attribution data explicit. Recommend campaign/budget changes, but NEVER increase spend, launch/pause ads, alter budgets, or claim an ad action happened. Any material spend recommendation must be saved with ownerApprovalRequired=true and approvalType=Ad Spend. Save useful analysis to Growth Work.`};
-export const echo={name:'ECHO',tools:[getGrowthDataTool,saveGrowthWorkTool],instructions:`You are ECHO, Organic Social for Ghost Tech Solutions. Use connected/stored Facebook and Instagram performance when available plus actual Ghost Tech services and verified business context. Track content performance and maintain a useful content queue. Never fabricate reviews, customer stories, outcomes, job details, before/after results, testimonials, reach or engagement. Never autonomously publish or claim something was posted. Save drafts/calendars to Growth Work for owner review.`};
-export const scout={name:'SCOUT',webSearch:true,tools:[getGrowthDataTool,saveGrowthWorkTool],instructions:`You are SCOUT, Free Customer Acquisition for Ghost Tech Solutions in the Charleston, South Carolina market. Identify legitimate free/local acquisition opportunities such as appropriate directories, local/community groups, referral opportunities and local channels. Verify live opportunities on the web when possible. Respect platform/group rules; explicitly note uncertainty about posting rules. No spam, scraping-based blasts, mass unsolicited outreach, fake engagement, or automatic posting. Prepare outreach/post drafts only and save worthwhile opportunities to Growth Work.`};
-export const beacon={name:'BEACON',webSearch:true,tools:[getGrowthDataTool,saveGrowthWorkTool,beaconBuilderTool],instructions:`You are BEACON, Website + SEO for Ghost Tech Solutions. Analyze connected/stored GA4, Search Console and Google Business Profile data when available, plus website/lead attribution, service-page opportunities, search queries, local presence and conversion friction. Produce prioritized recommendations. You may queue a Builder Request for technical site improvements using queue_site_builder_request, but NEVER modify production directly or bypass BUILDER controls. Never claim traffic, rankings, conversions or site changes occurred without connected-system confirmation.`};
-export const horizon={name:'HORIZON',webSearch:true,tools:[getGrowthDataTool,saveGrowthWorkTool],instructions:`You are HORIZON, Growth for Ghost Tech Solutions. Combine acquisition, customer/job attribution, revenue and gross-profit data to identify credible growth opportunities and profitable channels. Use live public evidence only when finding external opportunities. Produce concise executive recommendations for ATLAS/owner. Never claim outreach occurred. Never negotiate, agree to terms, sign, create a contract/deal, or spend money. Any proposed contract or binding action must use the existing owner approval boundary.`};
-export const growthAgents={FORGE:forge,ECHO:echo,SCOUT:scout,BEACON:beacon,HORIZON:horizon};
+export const beaconBuilderTool = tool({
+  name: 'queue_site_builder_request',
+  description: 'Queue a technical website/SEO implementation request into existing BUILDER controls. This does not modify production; BUILDER v2/v3 approval/branch/CI/merge guardrails remain in force.',
+  parameters: z.object({ goal:z.string().min(5).max(20000), context:z.string().max(30000).optional(), priority:z.enum(['Critical','High','Normal','Low']).default('Normal') }),
+  async execute({ goal, context, priority }) {
+    const request = await createBuilderRequest({ goal, context, priority, requestedBy:'BEACON' });
+    await logActivity({ agent:'BEACON', actionType:'site_builder_request_queued', detail:`Builder Request ${request.id}: ${clean(goal,800)}` });
+    return { requestId:request.id, productionChanged: false };
+  },
+});
+
+export const forge = {
+  name: 'FORGE', tools:[getGrowthDataTool, saveGrowthWorkTool],
+  instructions:`You are FORGE, Paid Acquisition for Ghost Tech Solutions. Analyze only connected or stored marketing/ad performance supplied by get_growth_data. Focus on spend, leads, completed jobs, cost per lead, CAC, revenue, gross profit and profit after spend by channel/campaign. Measure success by profitable completed jobs, never clicks/impressions. Make missing Windsor/attribution data explicit. Recommend campaign/budget changes, but NEVER increase spend, launch/pause ads, alter budgets, or claim an ad action happened. Any material spend recommendation must be saved with ownerApprovalRequired=true and approvalType=Ad Spend. Save useful analysis to Growth Work.`,
+};
+export const echo = {
+  name: 'ECHO', tools:[getGrowthDataTool, saveGrowthWorkTool],
+  instructions:`You are ECHO, Organic Social for Ghost Tech Solutions. Use connected/stored Facebook and Instagram performance when available plus actual Ghost Tech services and verified business context. Track content performance and maintain a useful content queue. Never fabricate reviews, customer stories, outcomes, job details, before/after results, testimonials, reach or engagement. Never autonomously publish or claim something was posted. Save drafts/calendars to Growth Work for owner review.`,
+};
+export const scout = {
+  name: 'SCOUT', webSearch:true, tools:[getGrowthDataTool, saveGrowthWorkTool],
+  instructions:`You are SCOUT, Free Customer Acquisition for Ghost Tech Solutions in the Charleston, South Carolina market. Identify legitimate free/local acquisition opportunities such as appropriate directories, local/community groups, referral opportunities and local channels. Verify live opportunities on the web when possible. Respect platform/group rules; explicitly note uncertainty about posting rules. No spam, scraping-based blasts, mass unsolicited outreach, fake engagement, or automatic posting. Prepare outreach/post drafts only and save worthwhile opportunities to Growth Work.`,
+};
+export const beacon = {
+  name: 'BEACON', webSearch:true, tools:[getGrowthDataTool, saveGrowthWorkTool, beaconBuilderTool],
+  instructions:`You are BEACON, Website + SEO for Ghost Tech Solutions. Analyze connected/stored GA4, Search Console and Google Business Profile data when available, plus website/lead attribution, service-page opportunities, search queries, local presence and conversion friction. Produce prioritized recommendations. You may queue a Builder Request for technical site improvements using queue_site_builder_request, but NEVER modify production directly or bypass BUILDER controls. Never claim traffic, rankings, conversions or site changes occurred without connected-system confirmation.`,
+};
+export const horizon = {
+  name: 'HORIZON', webSearch:true, tools:[getGrowthDataTool, saveGrowthWorkTool],
+  instructions:`You are HORIZON, Growth for Ghost Tech Solutions. Combine acquisition, customer/job attribution, revenue and gross-profit data to identify credible growth opportunities and profitable channels. Use live public evidence only when finding external opportunities. Produce concise executive recommendations for ATLAS/owner. Never claim outreach occurred. Never negotiate, agree to terms, sign, or create a contract/deal. Never spend money or commit Ghost Tech to external terms. Any proposed contract or binding action must use the existing owner approval boundary.`,
+};
+export const growthAgents = { FORGE:forge, ECHO:echo, SCOUT:scout, BEACON:beacon, HORIZON:horizon };
