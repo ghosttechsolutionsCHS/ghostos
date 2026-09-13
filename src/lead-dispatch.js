@@ -1,6 +1,7 @@
 import { TABLES, createRecord, getRecord, listRecords, logActivity, updateRecord } from './airtable.js';
 import { buildIdempotencyKey, createRelayDraft } from './relay-delivery.js';
-import { processLead } from './ghostos.js';
+import { processLead, runSupplyResearchForJob } from './ghostos.js';
+import { createPartsQuotePipeline } from './parts-quote-pipeline.js';
 
 const ACTIVE_MESSAGE_STATUSES = new Set(['Pending','Blocked','Failed','Sent','Delivered']);
 const STALE_PROCESSING_MS = 15 * 60 * 1000;
@@ -40,6 +41,7 @@ export function createLeadDispatcher(overrides = {}) {
     updateRecord,
     createRelayDraft,
     processLead,
+    runPartsQuotePipeline: (jobId) => createPartsQuotePipeline({ researchParts: runSupplyResearchForJob }).run(jobId),
     now: () => new Date().toISOString(),
     ...overrides,
   };
@@ -183,6 +185,29 @@ export function createLeadDispatcher(overrides = {}) {
       catch (error) { results.push({ processed:false, failed:true, jobId:job.id, error:String(error?.message || error) }); }
     }
 
+    // Continue already-triaged/processed leads through the company pipeline. This is deliberately
+    // separate from dispatch eligibility so recovered drafts (for example a lead created before
+    // this pipeline existed) can still reach SUPPLY -> LEDGER -> RELAY without regenerating triage.
+    const refreshedJobs = await deps.listRecords(TABLES.JOBS, { maxRecords:300 });
+    const pipelineCandidates = refreshedJobs
+      .filter((job) => job.fields['GhostOS Dispatch Status'] === 'Processed')
+      .filter((job) => !['Completed','Lost / Declined','Scheduled','In Progress'].includes(job.fields.Status))
+      .filter((job) => job.fields['RELAY State'] !== 'Need More Info')
+      .slice(0, limit);
+    const pipelineResults = [];
+    for (const job of pipelineCandidates) {
+      try {
+        const result = await deps.runPartsQuotePipeline(job.id);
+        pipelineResults.push({ jobId: job.id, ...result });
+      } catch (error) {
+        const message = String(error?.message || error).slice(0, 20000);
+        pipelineResults.push({ jobId: job.id, failed: true, error: message });
+        await deps.logActivity({
+          agent:'ATLAS', jobId:job.id, actionType:'parts_quote_pipeline_failed', status:'Error', detail:message,
+        });
+      }
+    }
+
     const summary = {
       leadsScanned: jobs.length,
       newLeadsSeen,
@@ -192,8 +217,11 @@ export function createLeadDispatcher(overrides = {}) {
       draftsRecoveredOrCreated: results.filter((r)=>r.recoveredDraft || r.draftCreated).length,
       failures: results.filter((r)=>r.failed).map((r)=>({ jobId:r.jobId, error:r.error })),
       results,
+      pipelineCandidates: pipelineCandidates.length,
+      pipelineResults,
+      pipelineFailures: pipelineResults.filter((r)=>r.failed).map((r)=>({ jobId:r.jobId, error:r.error })),
     };
-    await deps.logActivity({ agent:'ATLAS', actionType:'lead_dispatch_cycle_summary', status:summary.failures.length ? 'Error' : 'Done', detail:JSON.stringify(summary).slice(0,90000) });
+    await deps.logActivity({ agent:'ATLAS', actionType:'lead_dispatch_cycle_summary', status:summary.failures.length || summary.pipelineFailures.length ? 'Error' : 'Done', detail:JSON.stringify(summary).slice(0,90000) });
     console.log('GhostOS lead dispatch cycle summary', JSON.stringify(summary));
     return summary;
   }
