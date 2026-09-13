@@ -11,6 +11,7 @@ import {
   updateJobStateTool,
 } from './tools.js';
 import { forge, echo, scout, beacon, horizon, getGrowthDataTool } from './growth.js';
+import { compactDailyContext, getOperationsSnapshot, storeDailyCycle } from './daily-ops.js';
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -47,6 +48,13 @@ const atlas = new Agent({
   instructions: `You are ATLAS, general manager of Ghost Tech Solutions and manager of eleven GhostOS agents: ATLAS, FORGE, ECHO, SCOUT, BEACON, RELAY, SUPPLY, DISPATCH, LEDGER, HORIZON, and BUILDER. Optimize sustainable legitimate profitable completed jobs and cash, not vanity metrics. Airtable is the operating source of truth.
 
 For a request with a job record ID, first read the job and active business controls. For growth/company analysis, read get_growth_data and delegate to the appropriate growth specialist. Use specialists only when their expertise materially helps; do not manufacture busywork.
+
+Daily Operations rules:
+- ATLAS owns one Morning Company Brief, one live prioritized attention queue, and one Night Closeout. Do not create separate per-agent notifications.
+- Prioritize customer urgency, cash impact, job-blocking impact, and deadlines.
+- Morning Brief includes only what matters today: new leads, jobs needing action, jobs waiting on customers, quote follow-up, parts blockers, today's appointments, revenue/gross-profit/cash snapshot, growth activity, Builder attention, and Owner Inbox decisions.
+- Night Closeout is concise and operational: leads received, quotes prepared, jobs completed, revenue collected, gross profit, cash movement, growth progress, unresolved blockers, and what rolls into tomorrow.
+- Physical repair quick actions are owner-reported facts. Never infer pickup, repair completion, payment, or customer pickup without the owner recording it.
 
 Growth Division rules:
 - FORGE evaluates paid marketing by profitable completed jobs, revenue, gross profit, CAC and profit after spend. It may recommend changes but cannot change spend or launch ads.
@@ -87,6 +95,26 @@ CUSTOMER_DRAFT:`,
     horizon.asTool({ toolName:'horizon', toolDescription:'Research B2B/referral opportunities and prepare partnership briefs/outreach drafts. Cannot bind the company.' }),
   ],
 });
+
+export async function generateDailyOperationsCycle(cycle) {
+  requireEnv('OPENAI_API_KEY'); requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID');
+  if (!['Morning Brief','Night Closeout'].includes(cycle)) throw new Error('Unsupported Daily Operations cycle');
+  const snapshot = await getOperationsSnapshot();
+  const context = compactDailyContext(snapshot, cycle);
+  const prompt = cycle === 'Morning Brief'
+    ? `Generate today's single concise Morning Company Brief for the owner from this verified GhostOS context. Prioritize only what matters today. Do not create separate agent notifications. Do not claim any external action occurred. Mention owner action only where actually required. Use short sections: PRIORITIES TODAY, CUSTOMER/JOBS, MONEY, GROWTH, BUILDER/OWNER DECISIONS.\n\n${JSON.stringify(context)}`
+    : `Generate today's single concise Night Closeout for the owner from this verified GhostOS context. Cover leads received, quotes prepared, jobs completed, revenue collected, gross profit, cash movement, growth progress, unresolved blockers, and what rolls into tomorrow. Do not create separate agent notifications and do not invent actions or numbers. Use short sections: TODAY'S RESULTS, MONEY, GROWTH, BLOCKERS, TOMORROW.\n\n${JSON.stringify(context)}`;
+  try {
+    const result = await run(atlas, prompt, { maxTurns: 8 });
+    const brief = String(result.finalOutput || '').trim();
+    if (!brief) throw new Error('ATLAS returned an empty daily operations brief');
+    const record = await storeDailyCycle(cycle, brief, 'Ready');
+    return { cycle, brief, recordId: record.id, generatedAt: record.fields['Generated At'] };
+  } catch (error) {
+    await logActivity({ agent:'ATLAS', actionType:cycle==='Morning Brief'?'morning_company_brief_failed':'night_closeout_failed', status:'Error', detail:error?.message || String(error) });
+    throw error;
+  }
+}
 
 export async function processLead(recordId, lead = null) {
   requireEnv('OPENAI_API_KEY'); requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID');
