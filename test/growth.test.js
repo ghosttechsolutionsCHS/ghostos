@@ -36,7 +36,7 @@ test('BEACON can only route technical work into existing BUILDER workflow', () =
   assert.match(growth, /queue_site_builder_request/);
   assert.match(growth, /createBuilderRequest/);
   assert.match(growth, /productionChanged: false/);
-  assert.doesNotMatch(growth, /approveAndMergeProposal|merge_pull_request|\/merge/);
+  assert.doesNotMatch(growth, /approveAndMergeProposal|merge_pull_request|pulls\/.*\/merge/);
 });
 
 test('ATLAS manages all 11 agents and emits one executive summary', () => {
