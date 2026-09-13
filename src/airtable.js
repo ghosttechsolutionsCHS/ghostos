@@ -13,6 +13,7 @@ export const TABLES = Object.freeze({
   MARKETING: 'Marketing Channels',
   GROWTH: 'Growth Opportunities',
   GROWTH_WORK: 'Growth Work',
+  DAILY_OPS: 'Daily Operations',
 });
 
 function requireEnv(name) {
@@ -24,6 +25,7 @@ function requireEnv(name) {
 function compactFields(fields) {
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
+function createdTime(record) { return record?._rawJson?.createdTime || record?.createdTime || null; }
 
 export function base() {
   return new Airtable({ apiKey: requireEnv('AIRTABLE_PAT') }).base(requireEnv('AIRTABLE_BASE_ID'));
@@ -31,7 +33,7 @@ export function base() {
 
 export async function getRecord(table, id) {
   const record = await base()(table).find(id);
-  return { id: record.id, fields: record.fields };
+  return { id: record.id, fields: record.fields, createdTime: createdTime(record) };
 }
 
 export async function listRecords(table, options = {}) {
@@ -40,17 +42,17 @@ export async function listRecords(table, options = {}) {
   if (options.filterByFormula) selectOptions.filterByFormula = options.filterByFormula;
   if (options.sort) selectOptions.sort = options.sort;
   const records = await base()(table).select(selectOptions).all();
-  return records.map((record) => ({ id: record.id, fields: record.fields }));
+  return records.map((record) => ({ id: record.id, fields: record.fields, createdTime: createdTime(record) }));
 }
 
 export async function createRecord(table, fields) {
   const record = await base()(table).create(compactFields(fields), { typecast: true });
-  return { id: record.id, fields: record.fields };
+  return { id: record.id, fields: record.fields, createdTime: createdTime(record) };
 }
 
 export async function updateRecord(table, id, fields) {
   const record = await base()(table).update(id, compactFields(fields), { typecast: true });
-  return { id: record.id, fields: record.fields };
+  return { id: record.id, fields: record.fields, createdTime: createdTime(record) };
 }
 
 export async function logActivity({ agent, jobId, actionType, status = 'Done', detail = '', consequential = false }) {
