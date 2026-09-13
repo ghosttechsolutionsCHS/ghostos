@@ -63,10 +63,9 @@ function providerMeta(data){
 export async function runMarketingExecutionCycle({now=new Date(),env=process.env,fetchImpl=fetch}={}){
   if(String(env.MARKETING_EXECUTION_ENABLED||'').toLowerCase()!=='true')return {skipped:true,reason:'marketing_execution_disabled'};
   const rows=await listRecords(TABLES.GROWTH_WORK,{maxRecords:300});
-  const due=rows.filter(r=>val(r.fields?.['Owner Decision'])==='Approved'&&['Approved','Scheduled'].includes(val(r.fields?.['Execution Status']))&&!r.fields?.['Provider Object ID']&&(!r.fields?.['Scheduled At']||Date.parse(r.fields['Scheduled At'])<=now.getTime()));
+  const due=rows.filter(r=>val(r.fields?.['Owner Decision'])==='Approved'&&['Approved','Scheduled'].includes(val(r.fields?.['Execution Status']))&&r.fields?.['Execution Connector']&&r.fields?.['Execution Action']&&r.fields?.['Execution Payload JSON']&&!r.fields?.['Provider Object ID']&&(!r.fields?.['Scheduled At']||Date.parse(r.fields['Scheduled At'])<=now.getTime()));
   const row=due[0];if(!row)return {skipped:true,reason:'no_due_approved_execution'};
   const f=row.fields||{},connector=String(f['Execution Connector']||''),action=String(f['Execution Action']||''),payload=parsePayload(f['Execution Payload JSON']);
-  if(!connector||!action){await updateRecord(TABLES.GROWTH_WORK,row.id,{'Execution Status':'Failed — Owner Attention','Execution Error':'Approved item has no executable provider action. Keep manual/connection-required workflow.','Updated At':now.toISOString()});return {skipped:false,id:row.id,failed:true,reason:'missing_execution_spec'}};
   validateExecutionSpec({connector,action,payload});
   await updateRecord(TABLES.GROWTH_WORK,row.id,{'Execution Status':'Executing','Execution Started At':now.toISOString(),'Execution Error':'','Updated At':now.toISOString()});
   try{
