@@ -6,6 +6,36 @@
   node_bundler = "esbuild"
 
 [[redirects]]
+  from = "/owner.html"
+  to = "/command-center.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/marketing.html"
+  to = "/command-center.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/approvals.html"
+  to = "/command-center.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/dashboard"
+  to = "/command-center.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/owner"
+  to = "/command-center.html"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/api/ghostos"
   to = "/.netlify/functions/ghostos"
   status = 200
@@ -48,14 +78,4 @@
 [[redirects]]
   from = "/lead-retry"
   to = "/lead-retry.html"
-  status = 200
-
-[[redirects]]
-  from = "/dashboard"
-  to = "/owner.html"
-  status = 200
-
-[[redirects]]
-  from = "/owner"
-  to = "/owner.html"
   status = 200
