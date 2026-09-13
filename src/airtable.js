@@ -99,6 +99,11 @@ function n(value) { const number = Number(value); return Number.isFinite(number)
 function latestByAgent(records, agent) {
   return records.filter((r) => r.fields.Agent === agent).sort((a,b)=>new Date(b.fields['Created At']||0)-new Date(a.fields['Created At']||0))[0];
 }
+function latestPipelineJob(jobs) {
+  return jobs
+    .filter((job) => ['Part Research','Ready to Quote','Awaiting Owner'].includes(job.fields['RELAY State']) && String(job.fields['RELAY Next Action'] || '').trim())
+    .sort((a,b) => new Date(b.fields['GhostOS Dispatch Completed At'] || b.fields['Last Contacted'] || b.createdTime || 0) - new Date(a.fields['GhostOS Dispatch Completed At'] || a.fields['Last Contacted'] || a.createdTime || 0))[0] || null;
+}
 
 export async function getDashboardSnapshot() {
   const [jobs, parts, quotes, approvals, activity, cash, messages, controls, builderRequests, marketing, growthOpportunities, growthWork] = await Promise.all([
@@ -123,6 +128,7 @@ export async function getDashboardSnapshot() {
   const newLeads = jobs.filter((r) => ['New Lead', 'Need Quote'].includes(r.fields.Status));
   const dispatchingJobs = jobs.filter((r)=>r.fields['GhostOS Dispatch Status']==='Processing');
   const failedDispatchJobs = jobs.filter((r)=>r.fields['GhostOS Dispatch Status']==='Failed');
+  const pipelineJob = latestPipelineJob(activeJobs);
   const researchedParts = parts.filter((r) => Boolean(r.fields['Research Status']));
   const moneyIn = cash.reduce((sum, r) => sum + n(r.fields['Money In']), 0);
   const moneyOut = cash.reduce((sum, r) => sum + n(r.fields['Money Out']), 0);
@@ -162,6 +168,9 @@ export async function getDashboardSnapshot() {
         status = 'Needs Owner';
         currentTask = `${failedDispatchJobs.length} lead processing attempt${failedDispatchJobs.length===1?'':'s'} failed`;
         nextAction = 'Use the authenticated Process / Retry Lead action after reviewing the recorded dispatch error.';
+      } else if (pipelineJob) {
+        currentTask = pipelineJob.fields['Job / Customer'] || 'Repair pipeline';
+        nextAction = pipelineJob.fields['RELAY Next Action'];
       }
     }
     if (name === 'RELAY' && relayDrafts.length && status !== 'Working' && status !== 'Needs Owner') {
