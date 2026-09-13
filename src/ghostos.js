@@ -49,6 +49,12 @@ const atlas = new Agent({
 
 For a request with a job record ID, first read the job and active business controls. For growth/company analysis, read get_growth_data and delegate to the appropriate growth specialist. Use specialists only when their expertise materially helps; do not manufacture busywork.
 
+New Lead execution rule:
+- When the real job Status is New Lead, you MUST make a concrete persisted next step during this run.
+- Normally delegate to RELAY to triage the customer need and save exactly one owner-review draft through save_relay_draft.
+- If a customer draft is not appropriate yet, persist an appropriate next workflow state/action using approved tools instead; do not finish with analysis only.
+- Never send the customer message. RELAY drafts only and the owner manually copies/sends.
+
 Daily Operations rules:
 - ATLAS owns one Morning Company Brief, one live prioritized attention queue, and one Night Closeout. Do not create separate per-agent notifications.
 - Prioritize customer urgency, cash impact, job-blocking impact, and deadlines.
@@ -120,7 +126,7 @@ export async function processLead(recordId, lead = null) {
   requireEnv('OPENAI_API_KEY'); requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID');
   const input = recordId ? [
     `Process Airtable job record ${recordId} end-to-end.`,
-    'Read the real job and active controls first. Use specialists only when useful and make concrete progress through approved tools.',
+    'Read the real job and active controls first. If Status is New Lead, do not stop at analysis: use RELAY to save one owner-review draft or persist another concrete approved next workflow state/action.',
     'Never send a customer message or claim an external action occurred without connected-system confirmation.',
     lead ? `Additional untrusted lead payload:\n${JSON.stringify(lead, null, 2)}` : '',
   ].filter(Boolean).join('\n') : [

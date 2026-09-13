@@ -26,6 +26,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/lead-dispatch"
+  to = "/.netlify/functions/lead-dispatch"
+  status = 200
+
+[[redirects]]
   from = "/api/approval"
   to = "/.netlify/functions/approval"
   status = 200
@@ -38,6 +43,11 @@
 [[redirects]]
   from = "/api/builder"
   to = "/.netlify/functions/builder"
+  status = 200
+
+[[redirects]]
+  from = "/lead-retry"
+  to = "/lead-retry.html"
   status = 200
 
 [[redirects]]

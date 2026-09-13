@@ -121,6 +121,8 @@ export async function getDashboardSnapshot() {
   const lost = jobs.filter((r) => r.fields.Status === 'Lost / Declined');
   const activeJobs = jobs.filter((r) => !['Completed', 'Lost / Declined'].includes(r.fields.Status));
   const newLeads = jobs.filter((r) => ['New Lead', 'Need Quote'].includes(r.fields.Status));
+  const dispatchingJobs = jobs.filter((r)=>r.fields['GhostOS Dispatch Status']==='Processing');
+  const failedDispatchJobs = jobs.filter((r)=>r.fields['GhostOS Dispatch Status']==='Failed');
   const researchedParts = parts.filter((r) => Boolean(r.fields['Research Status']));
   const moneyIn = cash.reduce((sum, r) => sum + n(r.fields['Money In']), 0);
   const moneyOut = cash.reduce((sum, r) => sum + n(r.fields['Money Out']), 0);
@@ -143,12 +145,31 @@ export async function getDashboardSnapshot() {
     const pendingOwner = pendingApprovals.some((a)=>a.fields['Requested By']===name);
     const activityAge = recent ? Date.now() - new Date(recent.fields['Created At']||0).getTime() : Infinity;
     let status = 'Idle';
+    let currentTask = growth?.fields['Current Task'] || (recent?.fields.Status === 'Running' ? recent.fields['Action Type'] : null);
+    let latestResult = growth?.fields['Latest Result'] || (recent?.fields.Status !== 'Running' ? recent?.fields.Detail : null);
+    let nextAction = growth?.fields['Next Action'] || null;
+
     if (pendingOwner || growth?.fields.Status === 'Needs Owner' || recent?.fields.Status === 'Blocked') status = 'Needs Owner';
     else if (recent?.fields.Status === 'Running' && activityAge < 60*60*1000) status = 'Working';
     else if (growth && ['Draft','Ready for Owner'].includes(growth.fields.Status)) status = 'Waiting';
-    const currentTask = growth?.fields['Current Task'] || (recent?.fields.Status === 'Running' ? recent.fields['Action Type'] : null);
-    const latestResult = growth?.fields['Latest Result'] || (recent?.fields.Status !== 'Running' ? recent?.fields.Detail : null);
-    const nextAction = growth?.fields['Next Action'] || null;
+
+    if (name === 'ATLAS') {
+      if (dispatchingJobs.length) {
+        status = 'Working';
+        currentTask = `Processing ${dispatchingJobs.length} New Lead${dispatchingJobs.length===1?'':'s'}`;
+        nextAction = 'Complete persisted lead triage and verify the resulting workflow artifact.';
+      } else if (failedDispatchJobs.length) {
+        status = 'Needs Owner';
+        currentTask = `${failedDispatchJobs.length} lead processing attempt${failedDispatchJobs.length===1?'':'s'} failed`;
+        nextAction = 'Use the authenticated Process / Retry Lead action after reviewing the recorded dispatch error.';
+      }
+    }
+    if (name === 'RELAY' && relayDrafts.length && status !== 'Working' && status !== 'Needs Owner') {
+      status = 'Waiting';
+      currentTask = `${relayDrafts.length} customer draft${relayDrafts.length===1?'':'s'} waiting for owner review/send`;
+      nextAction = 'Owner reviews/edits the draft, copies it, sends personally, then marks it sent.';
+    }
+
     return { name, status, currentTask, latestResult, nextAction, lastAction: recent?.fields['Action Type'] || null, lastActivity: recent?.fields['Created At'] || null };
   });
 
@@ -157,6 +178,7 @@ export async function getDashboardSnapshot() {
     metrics: {
       totalJobs: jobs.length, activeJobs: activeJobs.length, newLeads: newLeads.length, completedJobs: completed.length,
       pendingApprovals: pendingApprovals.length, relayDrafts: relayDrafts.length, builderOpen: builderOpen.length,
+      dispatchingLeads:dispatchingJobs.length, failedLeadDispatches:failedDispatchJobs.length,
       partsResearched: researchedParts.length, quotes: quotes.length, quotedPipeline, revenueCollected, partsCost, grossProfit,
       cashIn: moneyIn, cashOut: moneyOut, netCash: moneyIn - moneyOut, completionRate, avgTicket,
       growthWork: growthWork.length, marketingSpend: growthTotals.spend, marketingLeads: growthTotals.leads, marketingCompletedJobs: growthTotals.completedJobs,
