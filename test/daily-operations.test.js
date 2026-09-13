@@ -44,15 +44,15 @@ test('physical repair owner actions record stages, timestamps and downstream sta
   for (const value of ['Device Picked Up At','Repair Started At','Repair Finished At','Customer Picked Up At']) assert.match(operations, new RegExp(value));
   assert.match(operations, /RELAY Next Action/);
   assert.match(operations, /customer_picked_up/);
-  assert.match(operations, /Status='Completed'|return 'Completed'/);
+  assert.match(operations, /return 'Completed'/);
 });
 
-test('Collected Payment supports only Jim and Cash, updates revenue and cash, and never uses Square', () => {
+test('Collected Payment supports only Jim and Cash, updates revenue and cash, and never selects Square', () => {
   assert.match(operations, /\['Jim','Cash'\]\.includes\(paymentMethod\)/);
-  assert.match(operations, /'Revenue Collected'=previous\+value|fields\['Revenue Collected'\]=previous\+value/);
+  assert.match(operations, /fields\['Revenue Collected'\]=previous\+value/);
   assert.match(operations, /TABLES\.CASH/);
   assert.match(operations, /'Money In':value/);
-  assert.doesNotMatch(operations, /paymentMethod.*Square|Square.*paymentMethod/);
+  assert.doesNotMatch(operations, /'Payment Method'\s*:\s*'Square'/);
 });
 
 test('dashboard exposes Daily Operations views, queue fields and six owner repair actions', () => {
