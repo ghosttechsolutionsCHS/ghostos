@@ -1,0 +1,31 @@
+name: Creative data chunk hotfix
+on:
+  push:
+    paths:
+      - '.github/workflows/creative-data-chunks-hotfix.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch marketing exact creative loader
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('public/marketing.html')
+          s = p.read_text()
+          old = "const exact=String(f(row,'Creative Asset Data')||f(row,'Creative Asset URL')||'').trim();"
+          new = "const packed=String(f(row,'Creative Asset Data')||'')+String(f(row,'Creative Asset Data 2')||'')+String(f(row,'Creative Asset Data 3')||'');const exact=String(packed||f(row,'Creative Asset URL')||'').trim();"
+          if old not in s:
+              raise SystemExit('target not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+      - name: Commit hotfix
+        run: |
+          git config user.name 'ghosttechsolutionsCHS'
+          git config user.email 'ghosttechsolutionschs@gmail.com'
+          git add public/marketing.html
+          git commit -m 'fix: support chunked exact social creatives'
+          git push
