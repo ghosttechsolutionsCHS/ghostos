@@ -52,5 +52,10 @@
 
 [[redirects]]
   from = "/dashboard"
-  to = "/dashboard.html"
+  to = "/owner.html"
+  status = 200
+
+[[redirects]]
+  from = "/owner"
+  to = "/owner.html"
   status = 200
