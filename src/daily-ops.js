@@ -5,7 +5,7 @@ const TZ = 'America/New_York';
 function n(v){const x=Number(v);return Number.isFinite(x)?x:0;}
 function day(v){if(!v)return null;const d=new Date(v);if(Number.isNaN(d.getTime()))return null;return new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(d);}
 function today(v){return day(v)===todayLocalISO();}
-function latest(records,cycle){return records.filter(r=>r.fields.Cycle===cycle).sort((a,b)=>new Date(b.fields['Generated At']||0)-new Date(a.fields['Generated At']||0))[0]||null;}
+function latestToday(records,cycle,date){return records.filter(r=>r.fields.Cycle===cycle&&r.fields.Date===date).sort((a,b)=>new Date(b.fields['Generated At']||0)-new Date(a.fields['Generated At']||0))[0]||null;}
 
 export async function getOperationsSnapshot(){
   const [base,dailyOps]=await Promise.all([getDashboardSnapshot(),listRecords(TABLES.DAILY_OPS,{maxRecords:90})]);
@@ -18,6 +18,7 @@ export async function getOperationsSnapshot(){
   const completedToday=base.jobs.filter(r=>today(r.fields['Customer Picked Up At']) || (r.fields.Status==='Completed'&&today(r.fields['Repair Finished At'])));
   const quotesToday=base.quotes.filter(r=>today(r.fields['Created At']||r.createdTime));
   const cashToday=base.cash.filter(r=>r.fields.Date===date);
+  const customerPaymentsToday=cashToday.filter(r=>r.fields.Type==='Customer Payment');
   const growthToday=(base.growthDivision?.work||[]).filter(r=>today(r.fields['Updated At']||r.fields['Created At']||r.createdTime));
   const waitingCustomers=base.jobs.filter(r=>['Quoted','Awaiting Customer'].includes(r.fields.Status));
   const jobsNeedingAction=attentionQueue.filter(i=>['Job','RELAY Messages','Parts','Quotes'].includes(i.source));
@@ -27,6 +28,7 @@ export async function getOperationsSnapshot(){
   const builderAttention=attentionQueue.filter(i=>i.agent==='BUILDER');
   const ownerDecisions=attentionQueue.filter(i=>i.source==='Owner Inbox');
   const cashIn=cashToday.reduce((s,r)=>s+n(r.fields['Money In']),0),cashOut=cashToday.reduce((s,r)=>s+n(r.fields['Money Out']),0);
+  const revenueCollected=customerPaymentsToday.reduce((s,r)=>s+n(r.fields['Money In']),0);
   const completedRevenue=completedToday.reduce((s,r)=>s+n(r.fields['Revenue Collected']),0),completedGrossProfit=completedToday.reduce((s,r)=>s+n(r.fields['Gross Profit']),0);
   const daily={
     date,
@@ -38,7 +40,7 @@ export async function getOperationsSnapshot(){
     appointmentsToday:appointmentsToday.length,
     quotesPrepared:quotesToday.length,
     jobsCompleted:completedToday.length,
-    revenueCollected:cashIn,
+    revenueCollected,
     grossProfitCompleted:completedGrossProfit,
     completedRevenue,
     cashIn,cashOut,netCash:cashIn-cashOut,
@@ -46,7 +48,7 @@ export async function getOperationsSnapshot(){
     builderAttention:builderAttention.length,
     ownerDecisions:ownerDecisions.length,
   };
-  return {...base,attentionQueue,dailyOperations:{date,metrics:daily,morningBrief:latest(dailyOps,'Morning Brief'),nightCloseout:latest(dailyOps,'Night Closeout'),records:dailyOps.slice(0,30)}};
+  return {...base,attentionQueue,dailyOperations:{date,metrics:daily,morningBrief:latestToday(dailyOps,'Morning Brief',date),nightCloseout:latestToday(dailyOps,'Night Closeout',date),records:dailyOps.slice(0,30)}};
 }
 
 export function compactDailyContext(snapshot,cycle){
