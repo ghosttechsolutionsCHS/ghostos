@@ -25,7 +25,7 @@ export default async (req) => {
     headers.append('set-cookie', `ghostos_owner=${session}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
   }
 
-  return new Response(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening GhostOS</title><body style="background:#090d18;color:#fff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0"><div>Opening GhostOS…</div><script>location.replace('/command-center.html')</script></body>`, { status: 200, headers });
+  return new Response(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Opening GhostOS</title><body style="background:#090d18;color:#fff;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0"><div>Opening GhostOS…</div><script>try{sessionStorage.setItem('ghostosKey','session')}catch(e){}location.replace('/command-center.html')</script></body>`, { status: 200, headers });
 };
 
 export const config = { path: '/owner-auth' };
