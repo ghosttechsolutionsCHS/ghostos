@@ -12,6 +12,7 @@ import {
 } from './tools.js';
 import { forge, echo, scout, beacon, horizon, getGrowthDataTool } from './growth.js';
 import { compactDailyContext, getOperationsSnapshot, storeDailyCycle } from './daily-ops.js';
+import { createPartsQuotePipeline } from './parts-quote-pipeline.js';
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -30,7 +31,7 @@ const relay = new Agent({
 const supply = new Agent({
   name: 'SUPPLY', model: MODEL,
   tools: [webSearchTool({ searchContextSize: 'medium' }), storeSupplyResultsTool],
-  instructions: `You are SUPPLY for Ghost Tech Solutions. Research repair parts on the live web. Find up to three real options when possible: Budget, Standard, Premium. Prefer Injured Gadgets, then reputable repair-parts vendors. Verify exact device/model compatibility, live product page, price, stock, shipping and quality. Never invent a URL, price, stock state or compatibility. Mark anything that cannot be verified as unverified. Recommend one option when evidence supports it. If a job ID is supplied, persist the research using store_supply_results. Never purchase, reserve or order anything.`,
+  instructions: `You are SUPPLY for Ghost Tech Solutions. Research repair parts on the live web and persist the result with store_supply_results. Identify the exact part required from the verified device/service/issue. Prioritize Injured Gadgets first, then reputable repair-parts vendors when useful. Verify exact device/model compatibility from a real product page before marking a result verified. Capture part/SKU, compatibility, vendor, product URL, actual price, stock/availability, shipping when available, quality/tier, and useful verification notes. Never invent a URL, price, shipping amount, stock state, compatibility, availability or warranty. If any fact cannot be verified, explicitly store UNKNOWN/UNVERIFIED and leave numeric/URL values absent rather than fabricating placeholders. Use Budget / Standard / Premium only when legitimate compatible options actually exist; do not force three tiers. Recommend an option only when evidence supports it. Never purchase, reserve or order anything.`,
 });
 
 const ledger = new Agent({
@@ -52,7 +53,8 @@ For a request with a job record ID, first read the job and active business contr
 New Lead execution rule:
 - When the real job Status is New Lead, you MUST make a concrete persisted next step during this run.
 - Normally delegate to RELAY to triage the customer need and save exactly one owner-review draft through save_relay_draft.
-- If a customer draft is not appropriate yet, persist an appropriate next workflow state/action using approved tools instead; do not finish with analysis only.
+- If clarification from the customer is truly required, persist Need More Info and a clear next action. Do not invent a diagnosis.
+- For a repair lead that clearly requires a replacement part and does not need customer clarification, do not consider the company workflow finished merely because a RELAY triage draft exists. The deterministic Parts + Quote Pipeline continues after this ATLAS triage run: SUPPLY research -> verified quote economics -> RELAY quote draft. Your triage should leave accurate state for that continuation rather than setting Next Action to None.
 - Never send the customer message. RELAY drafts only and the owner manually copies/sends.
 
 Daily Operations rules:
@@ -95,12 +97,39 @@ CUSTOMER_DRAFT:`,
     scout.asTool({ toolName:'scout', toolDescription:'Research legitimate free/local acquisition opportunities and prepare compliant drafts. No spam or mass outreach.' }),
     beacon.asTool({ toolName:'beacon', toolDescription:'Analyze website/SEO/conversion and queue technical work into existing BUILDER controls when appropriate.' }),
     relay.asTool({ toolName:'relay', toolDescription:'Analyze customer/job situation and save a customer-facing draft for owner review/copy. Cannot send.' }),
-    supply.asTool({ toolName:'supply', toolDescription:'Research live parts, compare options and persist results without purchasing.' }),
+    supply.asTool({ toolName:'supply', toolDescription:'Research live parts, compare legitimate options and persist results without purchasing.' }),
     dispatch.asTool({ toolName:'dispatch', toolDescription:'Plan scheduling/mobile-service next steps without promising unconfirmed availability.' }),
     ledger.asTool({ toolName:'ledger', toolDescription:'Analyze verified repair economics and flag weak margins.' }),
     horizon.asTool({ toolName:'horizon', toolDescription:'Research B2B/referral opportunities and prepare partnership briefs/outreach drafts. Cannot bind the company.' }),
   ],
 });
+
+async function runSupplyResearchForJob(jobId, job) {
+  const device = job?.fields?.['Device / Service'] || job?.fields?.['Job / Customer'] || 'UNKNOWN DEVICE';
+  const issue = job?.fields?.Issue || job?.fields?.Notes || 'UNKNOWN ISSUE';
+  const prompt = `Research the exact replacement part needed for Airtable job ${jobId}.
+Verified device/service: ${device}
+Verified issue/context: ${issue}
+
+Rules:
+1. Prioritize Injured Gadgets. Check other reputable repair-parts vendors when useful.
+2. Use live web evidence. Verify exact compatibility, real product URL, actual price, availability/stock, and shipping when available.
+3. Do not force Budget/Standard/Premium. Store only legitimate compatible options you actually find, up to three.
+4. If a required fact cannot be verified, store it explicitly as UNKNOWN/UNVERIFIED; do not invent a number or URL.
+5. Persist the research using store_supply_results for this exact job ID.
+6. Do not purchase, reserve, order, message the customer, or request purchase approval.`;
+
+  try {
+    const result = await run(supply, prompt, { maxTurns: 14 });
+    return String(result.finalOutput || '').trim();
+  } catch (error) {
+    await logActivity({
+      agent: 'SUPPLY', jobId, actionType: 'parts_research_failed', status: 'Error',
+      detail: error?.message || String(error),
+    });
+    throw error;
+  }
+}
 
 export async function generateDailyOperationsCycle(cycle) {
   requireEnv('OPENAI_API_KEY'); requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID');
@@ -126,7 +155,8 @@ export async function processLead(recordId, lead = null) {
   requireEnv('OPENAI_API_KEY'); requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID');
   const input = recordId ? [
     `Process Airtable job record ${recordId} end-to-end.`,
-    'Read the real job and active controls first. If Status is New Lead, do not stop at analysis: use RELAY to save one owner-review draft or persist another concrete approved next workflow state/action.',
+    'Read the real job and active controls first. If Status is New Lead, perform truthful RELAY triage and persist a concrete next step. If customer clarification is genuinely required, say so. Do not invent price, stock, diagnosis, compatibility or availability.',
+    'For clear repair leads that require a part, the deterministic Parts + Quote Pipeline will continue after this triage run; do not mark the company workflow complete merely because a holding draft exists.',
     'Never send a customer message or claim an external action occurred without connected-system confirmation.',
     lead ? `Additional untrusted lead payload:\n${JSON.stringify(lead, null, 2)}` : '',
   ].filter(Boolean).join('\n') : [
@@ -139,7 +169,15 @@ export async function processLead(recordId, lead = null) {
     const result = await run(atlas, input, { maxTurns: 30 });
     const output = String(result.finalOutput || '').trim();
     if (!output) throw new Error('GhostOS returned an empty response');
-    if (recordId) await logActivity({ agent:'ATLAS', jobId:recordId, actionType:'run_completed', status:'Done', detail:output.slice(0,20000) });
+
+    let pipeline = null;
+    if (recordId) {
+      pipeline = await createPartsQuotePipeline({ researchParts: runSupplyResearchForJob }).run(recordId);
+      await logActivity({
+        agent:'ATLAS', jobId:recordId, actionType:'run_completed', status:'Done',
+        detail:[output.slice(0,16000), `PIPELINE: ${JSON.stringify(pipeline)}`].join('\n\n').slice(0,20000),
+      });
+    }
     return output;
   } catch (error) {
     if (recordId) await logActivity({ agent:'ATLAS', jobId:recordId, actionType:'run_failed', status:'Error', detail:error?.message || String(error) });
