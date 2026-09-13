@@ -1,0 +1,43 @@
+name: Exact marketing asset hotfix
+on:
+  push:
+    paths: ['.github/workflows/exact-marketing-asset-hotfix.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch marketing review exact assets
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('public/marketing.html')
+          s=p.read_text()
+          css='.exactAsset{width:100%;height:auto;display:block;border-radius:15px;background:#0b1220;cursor:zoom-in}'
+          if css not in s:
+              s=s.replace('.creativeCanvas{width:100%;height:auto;display:block;border-radius:15px;background:#0b1220;cursor:zoom-in}', '.creativeCanvas{width:100%;height:auto;display:block;border-radius:15px;background:#0b1220;cursor:zoom-in}'+css, 1)
+          s=s.replace('let D=null,ROWS=new Map(),activeCanvas=null;', 'let D=null,ROWS=new Map(),activeCanvas=null,activeAsset=null;', 1)
+          start=s.index('function media(row){')
+          end=s.index('\nfunction paintAll()', start)
+          new_media="""function media(row){const story=/story/i.test(f(row,'Content Type'));if(!row.id)return'';const exact=String(f(row,'Creative Asset Data')||f(row,'Creative Asset URL')||'').trim();if(exact){return `<div class=\"exactAssetWrap\"><img class=\"exactAsset\" src=\"${esc(exact)}\" data-exact-src=\"${esc(exact)}\" alt=\"Exact proposed marketing creative\"><div class=\"frameLabel\">EXACT CREATIVE SUPPLIED FOR THIS ${story?'STORY':'POST'}</div><div class=\"mediaTools\"><button class=\"btn small edit\" data-open-exact=\"${esc(exact)}\">Open full size / Save</button></div></div>`}if(story)return `<div class=\"storyGrid\">${[1,2,3].map(n=>`<div><canvas class=\"creativeCanvas\" data-creative-id=\"${esc(row.id)}\" data-frame=\"${n}\"></canvas><div class=\"frameLabel\">FRAME ${n} OF 3</div><div class=\"mediaTools\"><button class=\"btn small edit\" data-open-image=\"${esc(row.id)}\" data-frame=\"${n}\">Open / Save</button></div></div>`).join('')}</div>`;return `<canvas class=\"creativeCanvas\" data-creative-id=\"${esc(row.id)}\" data-frame=\"1\"></canvas><div class=\"mediaTools\"><button class=\"btn small edit\" data-open-image=\"${esc(row.id)}\" data-frame=\"1\">Open full size / Save</button></div>`}"""
+          s=s[:start]+new_media+s[end:]
+          s=s.replace("function openCanvas(id,frame=1){const row=ROWS.get(id);if(!row)return;const c=document.createElement('canvas');paintCanvas(c,row,Number(frame));activeCanvas=c;$('modalImg').src=c.toDataURL('image/png');$('creativeModal').classList.add('show')}", "function openCanvas(id,frame=1){const row=ROWS.get(id);if(!row)return;const c=document.createElement('canvas');paintCanvas(c,row,Number(frame));activeAsset=null;activeCanvas=c;$('modalImg').src=c.toDataURL('image/png');$('creativeModal').classList.add('show')}function openAsset(src){if(!src)return;activeCanvas=null;activeAsset=src;$('modalImg').src=src;$('creativeModal').classList.add('show')}", 1)
+          old_save="function saveActive(){if(!activeCanvas)return;const a=document.createElement('a');a.href=activeCanvas.toDataURL('image/png');a.download=`ghost-tech-marketing-${Date.now()}.png`;document.body.appendChild(a);a.click();a.remove()}"
+          new_save="function saveActive(){const a=document.createElement('a');if(activeAsset){a.href=activeAsset;a.download=`ghost-tech-marketing-${Date.now()}.${activeAsset.startsWith('data:image/webp')?'webp':'png'}`}else if(activeCanvas){a.href=activeCanvas.toDataURL('image/png');a.download=`ghost-tech-marketing-${Date.now()}.png`}else return;document.body.appendChild(a);a.click();a.remove()}"
+          if old_save not in s: raise SystemExit('saveActive target not found')
+          s=s.replace(old_save,new_save,1)
+          click_old="const c=e.target.closest('canvas[data-creative-id]');if(c){openCanvas(c.dataset.creativeId,c.dataset.frame);return}"
+          click_new="const ex=e.target.closest('[data-open-exact]');if(ex){openAsset(ex.dataset.openExact);return}const xi=e.target.closest('img[data-exact-src]');if(xi){openAsset(xi.dataset.exactSrc);return}const c=e.target.closest('canvas[data-creative-id]');if(c){openCanvas(c.dataset.creativeId,c.dataset.frame);return}"
+          if click_old not in s: raise SystemExit('click target not found')
+          s=s.replace(click_old,click_new,1)
+          p.write_text(s)
+          PY
+      - name: Commit exact asset support
+        run: |
+          git config user.name ghostos-bot
+          git config user.email actions@users.noreply.github.com
+          git add public/marketing.html
+          git commit -m 'fix: show exact generated social assets in review' || exit 0
+          git push
