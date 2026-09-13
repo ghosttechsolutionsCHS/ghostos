@@ -18,17 +18,9 @@ export class AIProviderError extends Error {
   }
 }
 
-export class AIToolExecutionError extends Error {
-  constructor(toolName, message, { cause = null } = {}) {
-    super(message, { cause });
-    this.name = 'AIToolExecutionError';
-    this.toolName = toolName;
-  }
-}
-
 export function defineTool({ name, description, parameters, execute }) {
   if (!name || typeof execute !== 'function') throw new Error('AI tool requires name and execute');
-  return { name, description: description || '', parameters: parameters || z.object({}), execute };
+  return { type: 'ghostos_function', name, description: description || '', parameters: parameters || z.object({}), execute };
 }
 
 export function providerConfig(env = process.env) {
@@ -63,7 +55,7 @@ export function safeAIError(error) {
 
 function anthropicClient(overrides = {}) {
   const apiKey = overrides.apiKey || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new AIProviderError('anthropic', 'ANTHROPIC_API_KEY is not configured');
+  if (!apiKey) throw new AIProviderError('anthropic', 'Anthropic runtime credential is not configured');
   return overrides.client || new Anthropic({ apiKey });
 }
 
@@ -79,15 +71,47 @@ function collectUrls(value, found = new Set()) {
   return found;
 }
 
+function normalizeUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch { return ''; }
+}
+
+function guardSupplyEvidence(input, evidenceUrls) {
+  if (!input || !Array.isArray(input.parts)) return input;
+  const evidence = new Set((evidenceUrls || []).map(normalizeUrl).filter(Boolean));
+  return {
+    ...input,
+    parts: input.parts.map((part) => {
+      if (!part?.verified) return part;
+      const url = normalizeUrl(part.vendorUrl);
+      if (url && evidence.has(url)) return part;
+      return {
+        ...part,
+        verified: false,
+        notes: [part.notes, 'Verification downgraded: product URL was not present in live web-search evidence captured for this execution.'].filter(Boolean).join('\n'),
+      };
+    }),
+  };
+}
+
 function textFromAnthropic(content = []) {
   return content.filter((block) => block?.type === 'text').map((block) => block.text || '').join('\n').trim();
+}
+
+function schemaForTool(item) {
+  if (item?.parameters && typeof item.parameters.parse === 'function') return z.toJSONSchema(item.parameters);
+  if (item?.parameters && typeof item.parameters === 'object') return item.parameters;
+  return { type: 'object', properties: {}, additionalProperties: false };
 }
 
 function anthropicTools(tools, { webSearch = false } = {}) {
   const result = tools.map((item) => ({
     name: item.name,
-    description: item.description,
-    input_schema: z.toJSONSchema(item.parameters),
+    description: item.description || '',
+    input_schema: schemaForTool(item),
   }));
   if (webSearch) {
     result.unshift({
@@ -98,6 +122,20 @@ function anthropicTools(tools, { webSearch = false } = {}) {
     });
   }
   return result;
+}
+
+async function invokeTool(item, rawInput, context) {
+  const input = item.name === 'store_supply_results' && context.provider === 'anthropic'
+    ? guardSupplyEvidence(rawInput, context.evidenceUrls)
+    : rawInput;
+  if (typeof item.execute === 'function') {
+    const parsed = item.parameters?.parse ? item.parameters.parse(input || {}) : input || {};
+    return item.execute(parsed, context);
+  }
+  if (typeof item.invoke === 'function') {
+    return item.invoke({ context: { ghostosProvider: context.provider, evidenceUrls: context.evidenceUrls || [] } }, JSON.stringify(input || {}));
+  }
+  throw new Error(`Tool ${item.name || '(unknown)'} is not executable`);
 }
 
 async function runAnthropic(agent, prompt, options = {}) {
@@ -137,19 +175,16 @@ async function runAnthropic(agent, prompt, options = {}) {
     messages.push({ role: 'assistant', content: response.content });
     const toolResults = [];
     for (const call of toolUses) {
-      const tool = byName.get(call.name);
-      if (!tool) {
+      const item = byName.get(call.name);
+      if (!item) {
         toolResults.push({ type: 'tool_result', tool_use_id: call.id, is_error: true, content: `Unknown tool: ${call.name}` });
         continue;
       }
       try {
-        const parsed = tool.parameters.parse(call.input || {});
-        const value = await tool.execute(parsed, { provider: 'anthropic', model, evidenceUrls: [...evidenceUrls] });
+        const value = await invokeTool(item, call.input || {}, { provider: 'anthropic', model, evidenceUrls: [...evidenceUrls] });
         toolResults.push({ type: 'tool_result', tool_use_id: call.id, content: JSON.stringify(value ?? null).slice(0, 100000) });
       } catch (error) {
-        const message = redactSecrets(error?.message || String(error));
-        toolResults.push({ type: 'tool_result', tool_use_id: call.id, is_error: true, content: message });
-        if (error instanceof AIToolExecutionError) throw error;
+        toolResults.push({ type: 'tool_result', tool_use_id: call.id, is_error: true, content: redactSecrets(error?.message || String(error)) });
       }
     }
     messages.push({ role: 'user', content: toolResults });
@@ -159,6 +194,7 @@ async function runAnthropic(agent, prompt, options = {}) {
 }
 
 function toOpenAITool(item, model) {
+  if (item?.type === 'function' && typeof item.invoke === 'function') return item;
   return openaiTool({
     name: item.name,
     description: item.description,
@@ -170,9 +206,9 @@ function toOpenAITool(item, model) {
 }
 
 async function runOpenAI(agent, prompt, options = {}) {
-  if (!process.env.OPENAI_API_KEY) throw new AIProviderError('openai', 'OPENAI_API_KEY is not configured');
+  if (!process.env.OPENAI_API_KEY) throw new AIProviderError('openai', 'OpenAI fallback credential is not configured');
   const config = providerConfig(options.env);
-  const model = options.model || agent.openaiModel || config.openaiModel;
+  const model = options.openaiModel || agent.openaiModel || config.openaiModel;
   const tools = (agent.tools || []).map((item) => toOpenAITool(item, model));
   if (agent.webSearch) tools.unshift(openaiWebSearchTool({ searchContextSize: 'medium' }));
   try {
@@ -196,14 +232,7 @@ async function observeAttempt({ agent, jobId, provider, model, success, latencyM
   const safe = error ? safeAIError(error) : null;
   const detail = JSON.stringify({ provider, model, success, latencyMs, ...(safe ? { statusCode: safe.statusCode, code: safe.code, message: safe.message } : {}) });
   try {
-    await logActivity({
-      agent,
-      jobId,
-      actionType: 'ai_execution',
-      status: success ? 'Done' : 'Error',
-      detail,
-      consequential: false,
-    });
+    await logActivity({ agent, jobId, actionType: 'ai_execution', status: success ? 'Done' : 'Error', detail, consequential: false });
   } catch (auditError) {
     console.warn('GhostOS AI observability write failed', { agent, provider, model, message: redactSecrets(auditError?.message || auditError) });
   }
@@ -216,9 +245,7 @@ async function attempt(provider, agent, prompt, options) {
     ? (options.model || agent.model || config.anthropicModel)
     : (options.openaiModel || agent.openaiModel || config.openaiModel);
   try {
-    const result = provider === 'anthropic'
-      ? await runAnthropic(agent, prompt, options)
-      : await runOpenAI(agent, prompt, options);
+    const result = provider === 'anthropic' ? await runAnthropic(agent, prompt, options) : await runOpenAI(agent, prompt, options);
     await observeAttempt({ agent: options.observerAgent || agent.name, jobId: options.jobId, provider, model: result.model || model, success: true, latencyMs: Date.now() - started });
     return result;
   } catch (error) {
@@ -245,12 +272,7 @@ export function agentAsTool(agent, { toolName, toolDescription, maxTurns = 12 } 
     description: toolDescription || `Delegate a focused task to ${agent.name}.`,
     parameters: z.object({ input: z.string().min(1).max(60000) }),
     async execute({ input }, context = {}) {
-      const result = await runAgent(agent, input, {
-        maxTurns,
-        provider: context.provider,
-        allowFallback: false,
-        observerAgent: agent.name,
-      });
+      const result = await runAgent(agent, input, { maxTurns, provider: context.provider, allowFallback: false, observerAgent: agent.name });
       return { output: result.finalOutput, provider: result.provider, model: result.model };
     },
   });
