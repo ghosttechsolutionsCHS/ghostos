@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#02060d"/><stop offset=".55" stop-color="#07162c"/><stop offset="1" stop-color="#02050a"/></linearGradient>
+  <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38cfff"/><stop offset="1" stop-color="#0877ff"/></linearGradient>
+  <filter id="glow"><feGaussianBlur stdDeviation="20" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<rect width="1080" height="1080" fill="url(#bg)"/>
+<circle cx="820" cy="360" r="330" fill="#0b52c7" opacity=".18" filter="url(#glow)"/>
+<rect x="42" y="42" width="996" height="996" rx="34" fill="none" stroke="#1f8fff" stroke-opacity=".45" stroke-width="2"/>
+<text x="70" y="105" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="58" font-weight="900">GHOST <tspan fill="#1eb7ff">TECH</tspan></text>
+<text x="74" y="146" fill="#d6e8ff" font-family="Arial,Helvetica,sans-serif" font-size="25" font-weight="700" letter-spacing="9">SOLUTIONS</text>
+<text x="70" y="214" fill="#84d9ff" font-family="Arial,Helvetica,sans-serif" font-size="19" font-weight="700" letter-spacing="3">PHONES  •  COMPUTERS  •  NETWORKING  •  SMART HOME</text>
+<text x="70" y="333" fill="#ffffff" font-family="Arial,Helvetica,sans-serif" font-size="74" font-weight="900">BROKEN</text>
+<text x="70" y="416" fill="url(#blue)" font-family="Arial,Helvetica,sans-serif" font-size="92" font-weight="900">DEVICE?</text>
+<text x="70" y="482" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="48" font-weight="900">WE FIX IT.</text>
+<g font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="21" fill="#fff">
+  <rect x="70" y="535" width="225" height="64" rx="16" fill="#081729" stroke="#158dff"/><text x="95" y="575">📱 PHONE REPAIRS</text>
+  <rect x="70" y="613" width="225" height="64" rx="16" fill="#081729" stroke="#158dff"/><text x="95" y="653">💻 COMPUTER REPAIRS</text>
+  <rect x="70" y="691" width="225" height="64" rx="16" fill="#081729" stroke="#158dff"/><text x="95" y="731">📶 WI-FI & NETWORK</text>
+  <rect x="70" y="769" width="225" height="64" rx="16" fill="#081729" stroke="#158dff"/><text x="95" y="809">🏠 SMART HOME</text>
+</g>
+<text x="70" y="884" fill="#8bdcff" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="800">ON-SITE SERVICE AVAILABLE • CHARLESTON, SC</text>
+<rect x="70" y="916" width="490" height="92" rx="24" fill="url(#blue)"/>
+<text x="104" y="958" fill="#00101d" font-family="Arial,Helvetica,sans-serif" font-size="28" font-weight="900">GET A QUOTE</text>
+<text x="104" y="990" fill="#00101d" font-family="Arial,Helvetica,sans-serif" font-size="22" font-weight="800">CALL OR TEXT 843-973-4201</text>
+<text x="610" y="970" fill="#dff5ff" font-family="Arial,Helvetica,sans-serif" font-size="22" font-weight="700">ghosttechsolution.com</text>
+<image href="/assets/ghost-mascot.webp" x="455" y="210" width="570" height="650" preserveAspectRatio="xMidYMid meet"/>
+<text x="720" y="884" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="28" font-weight="900">TECH PROBLEMS?</text>
+<text x="720" y="920" fill="#1eb7ff" font-family="Arial,Helvetica,sans-serif" font-size="28" font-weight="900">WE COME TO YOU.</text>
+</svg>
