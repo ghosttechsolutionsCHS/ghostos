@@ -43,3 +43,5 @@ test('mobile marketing and approvals entry points bootstrap owner UI without cro
   assert.match(approvals,/setView\('approvals'\)/);
   assert.doesNotMatch(approvals,/location\.replace/);
 });
+
+// Preview refresh marker: non-production visitor access is explicitly public.
