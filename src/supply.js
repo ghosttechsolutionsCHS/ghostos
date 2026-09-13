@@ -8,6 +8,14 @@ function numberOrNull(value) {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
 }
+function canonicalUrl(value) {
+  try {
+    const url = new URL(text(value));
+    url.hash = '';
+    url.search = '';
+    return url.toString().replace(/\/$/, '').toLowerCase();
+  } catch { return ''; }
+}
 function researchKey(part) {
   return [lower(part.tier), lower(part.vendor), lower(part.partOrSku)].join('|');
 }
@@ -60,7 +68,9 @@ export function createSupplyStore(overrides = {}) {
     for (const rawPart of rawParts.slice(0, 3)) {
       const part = normalizeSupplyPart(rawPart);
       const key = researchKey(part);
-      const existing = existingRows.find((row) => rowResearchKey(row) === key);
+      const urlKey = canonicalUrl(part.vendorUrl);
+      const existing = existingRows.find((row) => urlKey && canonicalUrl(row.fields?.['Vendor URL']) === urlKey)
+        || existingRows.find((row) => rowResearchKey(row) === key);
       const fields = {
         'Part / SKU': part.partOrSku,
         Job: [jobId],
