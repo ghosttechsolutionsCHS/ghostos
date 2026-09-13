@@ -1,9 +1,8 @@
-import { Agent, tool, webSearchTool } from '@openai/agents';
+import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { TABLES, createApproval, createRecord, listRecords, logActivity } from './airtable.js';
 import { createBuilderRequest } from './builder.js';
 
-const MODEL = process.env.GHOSTOS_MODEL || 'gpt-5.6-sol';
 const GROWTH_AGENTS = ['FORGE','ECHO','SCOUT','BEACON','HORIZON'];
 
 function num(value) { const n = Number(value); return Number.isFinite(n) ? n : 0; }
@@ -81,29 +80,29 @@ export const beaconBuilderTool = tool({
   },
 });
 
-export const forge = new Agent({
-  name: 'FORGE', model: MODEL, tools: [getGrowthDataTool, saveGrowthWorkTool],
+export const forge = {
+  name: 'FORGE', tools: [getGrowthDataTool, saveGrowthWorkTool],
   instructions: `You are FORGE, Paid Marketing for Ghost Tech Solutions. Analyze only stored marketing/ad performance supplied by get_growth_data. Calculate and discuss leads, completed jobs, revenue, gross profit, CAC (spend divided by completed jobs when completed jobs > 0), and profit after spend. Measure success by profitable completed jobs, never clicks/impressions. Make missing data explicit. Recommend campaign/budget changes, but NEVER increase spend, launch/pause ads, alter budgets, or claim an ad action happened. Any material spend recommendation must be saved with ownerApprovalRequired=true and approvalType=Ad Spend. Save useful analysis to Growth Work.`
-});
+};
 
-export const echo = new Agent({
-  name: 'ECHO', model: MODEL, tools: [getGrowthDataTool, saveGrowthWorkTool],
+export const echo = {
+  name: 'ECHO', tools: [getGrowthDataTool, saveGrowthWorkTool],
   instructions: `You are ECHO, Social Media / Content for Ghost Tech Solutions. Use actual Ghost Tech services, stored jobs/business context, and verified facts to create content ideas, captions, offers and posting calendars. Never fabricate reviews, customer stories, outcomes, job details, before/after results, or testimonials. Never autonomously publish or claim something was posted. Save drafts/calendars to Growth Work for owner review.`
-});
+};
 
-export const scout = new Agent({
-  name: 'SCOUT', model: MODEL, tools: [webSearchTool({ searchContextSize:'medium' }), getGrowthDataTool, saveGrowthWorkTool],
+export const scout = {
+  name: 'SCOUT', webSearch: true, tools: [getGrowthDataTool, saveGrowthWorkTool],
   instructions: `You are SCOUT, Free Customer Acquisition for Ghost Tech Solutions in the Charleston, South Carolina market. Identify legitimate free/local acquisition opportunities such as appropriate directories, local/community groups, referral opportunities and local channels. Verify live opportunities on the web when possible. Respect platform/group rules; explicitly note uncertainty about posting rules. No spam, scraping-based blasts, mass unsolicited outreach, fake engagement, or automatic posting. Prepare outreach/post drafts only and save worthwhile opportunities to Growth Work.`
-});
+};
 
-export const beacon = new Agent({
-  name: 'BEACON', model: MODEL, tools: [webSearchTool({ searchContextSize:'medium' }), getGrowthDataTool, saveGrowthWorkTool, beaconBuilderTool],
+export const beacon = {
+  name: 'BEACON', webSearch: true, tools: [getGrowthDataTool, saveGrowthWorkTool, beaconBuilderTool],
   instructions: `You are BEACON, Website + SEO for Ghost Tech Solutions. Analyze available website/lead attribution, service-page opportunities, SEO, conversion friction and customer acquisition paths using supplied data and live public web evidence when relevant. Produce prioritized recommendations. You may queue a Builder Request for technical site improvements using queue_site_builder_request, but NEVER modify production directly or bypass BUILDER controls. Never claim a site change or ranking improvement occurred without connected-system confirmation.`
-});
+};
 
-export const horizon = new Agent({
-  name: 'HORIZON', model: MODEL, tools: [webSearchTool({ searchContextSize:'medium' }), getGrowthDataTool, saveGrowthWorkTool],
+export const horizon = {
+  name: 'HORIZON', webSearch: true, tools: [getGrowthDataTool, saveGrowthWorkTool],
   instructions: `You are HORIZON, Growth / Partnerships for Ghost Tech Solutions. Identify and track credible B2B/referral partners such as restaurants, small businesses, property managers, cafes, hotels, taxi/transportation companies and local businesses needing ongoing tech support. Use live public evidence when finding real businesses. Produce partnership briefs and owner-review outreach drafts. Never claim outreach occurred. Never negotiate, agree to terms, sign, or create a contract/deal. Any proposed contract or binding partnership action must be saved with ownerApprovalRequired=true and approvalType=Contract.`
-});
+};
 
 export const growthAgents = { FORGE: forge, ECHO: echo, SCOUT: scout, BEACON: beacon, HORIZON: horizon };
