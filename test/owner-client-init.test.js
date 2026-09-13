@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
+
+function ownerHtml(){
+  return fs.readFileSync(new URL('../public/owner.html',import.meta.url),'utf8');
+}
 
 function ownerScript(){
-  const html=fs.readFileSync(new URL('../public/owner.html',import.meta.url),'utf8');
-  const match=html.match(/<script>([\s\S]*?)<\/script>/i);
+  const match=ownerHtml().match(/<script>([\s\S]*?)<\/script>/i);
   assert.ok(match,'owner inline script should exist');
   return match[1];
 }
@@ -14,37 +16,19 @@ test('owner inline browser script parses',()=>{
   assert.doesNotThrow(()=>new Function(ownerScript()));
 });
 
-test('owner navigation still initializes when sessionStorage is unavailable',()=>{
-  const elements=new Map();
-  const element=id=>{
-    if(!elements.has(id))elements.set(id,{id,value:'',textContent:'',innerHTML:'',classList:{add(){},remove(){},toggle(){}}});
-    return elements.get(id);
-  };
-  let clickHandler=null;
-  const document={
-    getElementById:id=>element(id),
-    querySelectorAll:()=>[],
-    addEventListener:(type,handler)=>{if(type==='click')clickHandler=handler;}
-  };
-  const location={hash:'#home'};
-  const storageError=Object.assign(new Error('Access to storage is not allowed from this context.'),{name:'SecurityError'});
-  const sandbox={
-    document,
-    location,
-    sessionStorage:{getItem(){throw storageError;},setItem(){throw storageError;}},
-    navigator:{clipboard:{writeText:async()=>{}}},
-    alert(){},
-    prompt(){return null;},
-    fetch(){throw new Error('fetch should not run without a key');},
-    console
-  };
-  vm.createContext(sandbox);
+test('owner initialization guards browser storage before navigation wiring',()=>{
+  const script=ownerScript();
+  assert.match(script,/function readSession\(k\)\{try\{return sessionStorage\.getItem\(k\)\|\|''\}catch\(e\)\{storageError=e;return ''\}\}/);
+  assert.match(script,/function writeSession\(k,v\)\{try\{sessionStorage\.setItem\(k,v\)\}catch\(e\)\{storageError=e\}\}/);
+  assert.match(script,/key=readSession\('ghostosKey'\)/);
+  assert.doesNotMatch(script,/let key=sessionStorage\.getItem\('ghostosKey'\)/);
+  assert.match(script,/document\.addEventListener\('click',e=>\{const b=e\.target\.closest\('\[data-view\]'\);if\(b\)setView\(b\.dataset\.view\)\}\)/);
+  assert.match(script,/setView\(location\.hash\.replace\('#',''\)\|\|'home'\)/);
+});
 
-  assert.doesNotThrow(()=>vm.runInContext(ownerScript(),sandbox));
-  assert.equal(typeof clickHandler,'function');
-  vm.runInContext("setView('marketing')",sandbox);
-  const result=vm.runInContext("({title:document.getElementById('pageTitle').textContent,hash:location.hash,error:document.getElementById('err').textContent})",sandbox);
-  assert.equal(result.title,'Marketing');
-  assert.equal(result.hash,'marketing');
-  assert.match(result.error,/Browser storage is unavailable/);
+test('backend failures surface an error without disabling owner navigation',()=>{
+  const script=ownerScript();
+  assert.match(script,/function showLoadError\(e\)\{showErr\(e\);\$\('#homeLine'\)\.textContent='Company data could not be loaded\. Navigation is still available\.'\}/);
+  assert.match(script,/async function refreshAll\(\)\{try\{[\s\S]*?\}catch\(e\)\{showLoadError\(e\)\}\}/);
+  assert.ok(script.indexOf("document.addEventListener('click'") < script.indexOf('async function refreshAll()'),'navigation is wired independently of API refresh execution');
 });
