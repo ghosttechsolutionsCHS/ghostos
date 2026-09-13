@@ -104,7 +104,7 @@ CUSTOMER_DRAFT:`,
   ],
 });
 
-async function runSupplyResearchForJob(jobId, job) {
+export async function runSupplyResearchForJob(jobId, job) {
   const device = job?.fields?.['Device / Service'] || job?.fields?.['Job / Customer'] || 'UNKNOWN DEVICE';
   const issue = job?.fields?.Issue || job?.fields?.Notes || 'UNKNOWN ISSUE';
   const prompt = `Research the exact replacement part needed for Airtable job ${jobId}.
