@@ -12,10 +12,9 @@
   force = true
 
 [[redirects]]
-  from = "/marketing.html"
-  to = "/command-center.html"
-  status = 200
-  force = true
+  from = "/marketing"
+  to = "/marketing.html"
+  status = 302
 
 [[redirects]]
   from = "/approvals.html"
