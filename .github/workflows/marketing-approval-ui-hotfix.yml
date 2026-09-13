@@ -1,0 +1,39 @@
+name: Marketing approval UI hotfix
+on:
+  push:
+    paths: ['.github/workflows/marketing-approval-ui-hotfix.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch marketing review cards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('public/marketing.html')
+          s=p.read_text()
+          s=s.replace('.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}', '.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.approvalBox{margin-top:14px;padding-top:14px;border-top:1px solid #2a3650}.previewLabel{display:flex;align-items:center;gap:7px;color:#8fb0ff;font-size:11px;font-weight:950;letter-spacing:.09em;text-transform:uppercase;margin:12px 0 8px}.captionLabel{font-size:11px;color:#aeb9d2;font-weight:900;text-transform:uppercase;letter-spacing:.1em;margin-top:12px}.btn.approve{background:linear-gradient(135deg,#1fbf75,#39d98a);color:#06150e}.btn.edit{background:#1a2440;border:1px solid #52668e}.btn.reject{background:#391923;border:1px solid #743144;color:#ffcbd4}.editBox{display:none;margin-top:10px}.editBox.open{display:block}.editBox textarea{width:100%;min-height:120px;resize:vertical;border-radius:14px;border:1px solid #3b4b6d;background:#09111f;color:#f7f9ff;padding:12px;font:inherit}.decisionNote{font-size:11px;color:#9aa8c3;margin-top:8px}.frameLabel{text-align:center;color:#9eb3d9;font-size:9px;font-weight:900;margin:5px 0}.customerPreview{border:1px solid #405276;border-radius:20px;padding:10px;background:#0a1120}.customerPreview>div:first-child{margin-top:0}')
+          old="media=isStory?`<div class=\"previewWrap storyRow\">${[1,2,3].map(n=>graphic(row,{frame:n})).join('')}</div>`:`<div class=\"previewWrap\">${graphic(row)}</div>`;"
+          new="media=isStory?`<div class=\"previewLabel\">PREVIEW — exactly what customers will see</div><div class=\"customerPreview\"><div class=\"previewWrap storyRow\">${[1,2,3].map(n=>`<div><div class=\"frameLabel\">FRAME ${n} OF 3</div>${graphic(row,{frame:n})}</div>`).join('')}</div></div>`:`<div class=\"previewLabel\">PREVIEW — exactly what customers will see</div><div class=\"customerPreview\"><div class=\"previewWrap\">${graphic(row)}</div></div>`;"
+          if old not in s: raise SystemExit('media target not found')
+          s=s.replace(old,new,1)
+          old2="${draft?`<div class=\"copy\">${esc(draft)}</div>`:''}${brief?`<div class=\"sub\" style=\"margin-top:10px\"><b>Creative brief:</b> ${esc(brief)}</div>`:''}"
+          new2="${draft?`<div class=\"captionLabel\">Caption that will post</div><div class=\"copy\">${esc(draft)}</div>`:''}<details class=\"sub\" style=\"margin-top:10px\"><summary>AI details</summary>${brief?`<div style=\"margin-top:8px\"><b>Creative brief:</b> ${esc(brief)}</div>`:''}</details>${/Instagram|Facebook/.test(platform)?approvalControls(row,draft):''}"
+          if old2 not in s: raise SystemExit('card target not found')
+          s=s.replace(old2,new2,1)
+          marker="function card(row,{visual=true}={}){"
+          helper="""function approvalControls(row,draft){const id=esc(row.id||''),decision=String(f(row,'Owner Decision')?.name||f(row,'Owner Decision')||'Pending');if(decision!=='Pending')return `<div class=\"approvalBox\"><b>${esc(decision)}</b><div class=\"decisionNote\">This item has already been reviewed.</div></div>`;return `<div class=\"approvalBox\"><div class=\"captionLabel\">Your decision</div><div class=\"actions\"><button class=\"btn approve\" onclick=\"decideMarketing('${id}','Approved')\">✓ Approve exact post</button><button class=\"btn edit\" onclick=\"toggleEdit('${id}')\">✎ Edit</button><button class=\"btn reject\" onclick=\"decideMarketing('${id}','Rejected')\">Reject</button></div><div id=\"edit-${id}\" class=\"editBox\"><textarea id=\"edittext-${id}\">${esc(draft)}</textarea><div class=\"actions\"><button class=\"btn approve\" onclick=\"decideMarketing('${id}','Approved',true)\">Save edit & approve</button><button class=\"btn alt\" onclick=\"toggleEdit('${id}')\">Cancel</button></div></div><div class=\"decisionNote\">Approve means this exact creative + caption is approved. Approval does not itself publish.</div></div>`}function toggleEdit(id){const el=document.getElementById('edit-'+id);if(el)el.classList.toggle('open')}async function decideMarketing(id,decision,useEdit=false){if(!confirm(decision==='Approved'?'Approve this exact post and caption?':'Reject this marketing item?'))return;const edit=useEdit?(document.getElementById('edittext-'+id)?.value||''):'';try{const key=sessionStorage.getItem('ghostosKey')||'';const r=await fetch('/api/marketing-approval',{method:'POST',headers:{'content-type':'application/json','x-ghostos-secret':key},body:JSON.stringify({id,decision,edit})});const j=await r.json();if(!r.ok)throw new Error(j.error||'Approval failed');await load()}catch(e){$('err').textContent=e.message;$('err').classList.add('show')}}\n"""
+          if marker not in s: raise SystemExit('function marker not found')
+          s=s.replace(marker,helper+marker,1)
+          p.write_text(s)
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name ghostos-bot
+          git config user.email actions@users.noreply.github.com
+          git add public/marketing.html
+          git commit -m 'fix: make marketing approvals explicit and preview-first'
+          git push
