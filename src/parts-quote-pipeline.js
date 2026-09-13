@@ -102,7 +102,10 @@ export function createPartsQuotePipeline(overrides = {}) {
     let parts = (await deps.listRecords(TABLES.PARTS, { maxRecords: 500 })).filter((row) => linkedToJob(row, jobId));
     let selected = choosePart(parts, job);
 
-    if (!selected) {
+    // Research only when this job has no persisted SUPPLY result yet. Existing verified/unverified
+    // rows are authoritative for idempotency and prevent the two-minute dispatcher from repeatedly
+    // running the same live web research.
+    if (!selected && parts.length === 0) {
       if (typeof deps.researchParts !== 'function') throw new Error('SUPPLY research runner is not configured');
       await deps.updateRecord(TABLES.JOBS, jobId, {
         'RELAY State': 'Part Research',
