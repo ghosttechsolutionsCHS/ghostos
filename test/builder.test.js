@@ -6,7 +6,7 @@ const builderSource = await readFile(new URL('../src/builder.js', import.meta.ur
 const improvementsSource = await readFile(new URL('../src/improvements.js', import.meta.url), 'utf8');
 const functionSource = await readFile(new URL('../netlify/functions/builder.js', import.meta.url), 'utf8');
 const scheduledSource = await readFile(new URL('../netlify/functions/builder-improvement-cycle.js', import.meta.url), 'utf8');
-const dashboardSource = await readFile(new URL('../public/dashboard-v3.html', import.meta.url), 'utf8');
+const dashboardSource = await readFile(new URL('../public/dashboard.html', import.meta.url), 'utf8');
 
 test('BUILDER v2 hard-blocks direct writes to main and scopes writes to builder branches', () => {
   assert.match(builderSource, /branch === 'main'/);
@@ -51,12 +51,31 @@ test('BUILDER v3 caps and deduplicates autonomous suggestions', () => {
   assert.match(improvementsSource, /Suggestion Fingerprint/);
   assert.match(improvementsSource, /daily_cap/);
   assert.match(improvementsSource, /similarity/);
-  assert.match(improvementsSource, /Rejected.*Dismissed/s);
+  assert.match(improvementsSource, /Rejected','Dismissed/);
+});
+
+test('v3 uses operations, controls, feedback and safe repository evidence', () => {
+  assert.match(improvementsSource, /recentActivity/);
+  assert.match(improvementsSource, /activeControls/);
+  assert.match(improvementsSource, /repoSnapshot/);
+  assert.match(improvementsSource, /SAFE_CODE_PATHS/);
+  assert.match(improvementsSource, /SECRET_PATH/);
+});
+
+test('suggestions are ranked by business impact plus engineering value', () => {
+  assert.match(improvementsSource, /impact \* 0\.65 \+ engineering \* 0\.35/);
+  assert.match(improvementsSource, /Engineering Value Score/);
+  assert.match(improvementsSource, /Suggestion Score/);
+  assert.match(dashboardSource, /Business/);
+  assert.match(dashboardSource, /Engineering/);
+  assert.match(dashboardSource, /Suggestion Score/);
 });
 
 test('autonomous proposal creation is restricted to clearly LOW risk valuable work', () => {
   assert.match(improvementsSource, /f\.Risk === 'Low'/);
   assert.match(improvementsSource, /Impact Score.*>= 8/s);
+  assert.match(improvementsSource, /Engineering Value Score.*>= 7/s);
+  assert.match(improvementsSource, /Suggestion Score.*>= 8/s);
   assert.match(improvementsSource, /\['Small','Medium'\]/);
   assert.match(improvementsSource, /createBuildProposal\(id\)/);
   assert.doesNotMatch(improvementsSource, /confirmHighRisk/);
