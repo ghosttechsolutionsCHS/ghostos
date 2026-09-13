@@ -89,6 +89,9 @@ export function createPartsQuotePipeline(overrides = {}) {
     let job = await deps.getRecord(TABLES.JOBS, jobId);
     if (!job) throw new Error('Repair pipeline job not found');
     if (!repairLeadNeedsPart(job)) return { applicable: false, jobId, reason: 'No clear part requirement' };
+    if (job.fields?.['RELAY State'] === 'Need More Info') {
+      return { applicable: true, jobId, completed: false, waitingForCustomerInfo: true };
+    }
 
     const existingQuotes = await deps.listRecords(TABLES.QUOTES, { maxRecords: 300 });
     const existingQuote = quoteForJob(existingQuotes, jobId);
