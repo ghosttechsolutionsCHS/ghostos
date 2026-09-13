@@ -1,10 +1,11 @@
 import { tool } from '@openai/agents';
 import { z } from 'zod';
-import { TABLES, createApproval, createRecord, getRecord, logActivity, readActiveControls, updateRecord } from './airtable.js';
+import { TABLES, createApproval, getRecord, logActivity, readActiveControls, updateRecord } from './airtable.js';
 import { assertTransition } from './state-machine.js';
 import { createQuoteForJob } from './quotes.js';
 import { createRelayDraft } from './relay-delivery.js';
 import { createBuilderRequest } from './builder.js';
+import { storeSupplyResults } from './supply.js';
 
 export const getJobTool = tool({
   name: 'get_job',
@@ -51,25 +52,28 @@ export const saveRelayDraftTool = tool({
   },
 });
 
-const researchedPartSchema = z.object({ tier: z.enum(['Budget', 'Standard', 'Premium']), partOrSku: z.string().min(1).max(250), device: z.string().max(250).optional(), partType: z.string().max(250).optional(), vendor: z.string().min(1).max(250), vendorUrl: z.string().url(), unitCost: z.number().nonnegative(), shipping: z.number().nonnegative().default(0), stockStatus: z.string().max(250), verified: z.boolean(), notes: z.string().max(10000).optional(), recommended: z.boolean().default(false) });
+const researchedPartSchema = z.object({
+  tier: z.enum(['Budget', 'Standard', 'Premium']),
+  partOrSku: z.string().min(1).max(250),
+  compatibility: z.string().max(500).optional(),
+  device: z.string().max(250).optional(),
+  partType: z.string().max(250).optional(),
+  vendor: z.string().min(1).max(250),
+  vendorUrl: z.string().url().nullable().optional(),
+  unitCost: z.number().nonnegative().nullable().optional(),
+  shipping: z.number().nonnegative().nullable().optional(),
+  shippingInfo: z.string().max(1000).optional(),
+  stockStatus: z.string().max(250).default('UNKNOWN'),
+  verified: z.boolean(),
+  notes: z.string().max(10000).optional(),
+  recommended: z.boolean().default(false),
+});
 
 export const storeSupplyResultsTool = tool({
   name: 'store_supply_results',
-  description: 'Persist verified or explicitly unverified SUPPLY part research into Parts & Inventory. Never use this tool to purchase or reserve a part.',
+  description: 'Persist SUPPLY research into Parts & Inventory. Missing facts must remain UNKNOWN/UNVERIFIED; never invent price, URL, compatibility, stock or shipping. This tool never purchases or reserves parts and deduplicates repeated research for the same job/part/tier/vendor.',
   parameters: z.object({ jobId: z.string().min(1), parts: z.array(researchedPartSchema).min(1).max(3) }),
-  async execute({ jobId, parts }) {
-    const stamp = new Date().toISOString();
-    const created = [];
-    for (const part of parts) created.push(await createRecord(TABLES.PARTS, {
-      'Part / SKU': part.partOrSku, Job: [jobId], Device: part.device || '', 'Part Type': part.partType || '', Vendor: part.vendor,
-      'Vendor URL': part.vendorUrl, 'Unit Cost': part.unitCost, Shipping: part.shipping, 'Purchase Status': part.recommended ? 'Approval Needed' : 'Researching',
-      'Research Tier': part.tier, 'Research Status': part.verified ? 'Verified' : 'Unverified', 'Stock Status': part.stockStatus,
-      'Researched At': stamp, Recommended: part.recommended, Notes: part.notes || '',
-    }));
-    await updateRecord(TABLES.JOBS, jobId, { 'RELAY State': 'Part Research', 'RELAY Next Action': 'Review stored SUPPLY options and generate a quote from verified economics.' });
-    await logActivity({ agent: 'SUPPLY', jobId, actionType: 'parts_research_stored', detail: `${created.length} option(s) stored.` });
-    return created;
-  },
+  async execute({ jobId, parts }) { return storeSupplyResults(jobId, parts); },
 });
 
 export const createQuoteTool = tool({

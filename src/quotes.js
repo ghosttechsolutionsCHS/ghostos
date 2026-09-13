@@ -1,6 +1,8 @@
 import { TABLES, createApproval, createRecord, getRecord, logActivity, updateRecord } from './airtable.js';
 import { assertTransition } from './state-machine.js';
 
+export const MIN_NORMAL_GROSS_MARGIN = 0.30;
+
 function money(value) {
   const n = Number(value || 0);
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
@@ -20,7 +22,7 @@ export function calculateQuote({ laborPrice = 0, partsPrice = 0, otherFees = 0, 
 export function quoteNeedsOwnerApproval({ grossMargin, pricingException = false, purchaseRequired = false }) {
   if (pricingException) return { required: true, type: 'Pricing Exception', reason: 'Quote uses a pricing exception.' };
   if (purchaseRequired) return { required: true, type: 'Purchase', reason: 'A parts purchase is required before the job can proceed.' };
-  if (grossMargin < 0.30) return { required: true, type: 'Pricing Exception', reason: 'Expected gross margin is below 30%.' };
+  if (grossMargin < MIN_NORMAL_GROSS_MARGIN) return { required: true, type: 'Pricing Exception', reason: `Expected gross margin is below ${(MIN_NORMAL_GROSS_MARGIN * 100).toFixed(0)}%.` };
   return { required: false, type: null, reason: null };
 }
 
@@ -79,11 +81,11 @@ export async function createQuoteForJob({
   await moveJobForQuote(jobId, targetStatus, {
     'Quoted Price': economics.total,
     'Parts Cost': economics.cost,
-    'RELAY State': approval.required ? 'Awaiting Owner' : 'Awaiting Customer',
+    'RELAY State': 'Awaiting Owner',
     'RELAY Reply Draft': customerMessage || '',
     'RELAY Next Action': approval.required
       ? `Owner approval required: ${approval.reason}`
-      : 'Quote is approved. RELAY can send the routine quote message once an outbound provider is configured.',
+      : 'Quote is approved. Prepare the RELAY quote draft for owner review/copy/send; GhostOS must not send it automatically.',
   });
 
   if (approval.required) {
