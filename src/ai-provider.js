@@ -206,16 +206,21 @@ function toOpenAITool(item, model) {
 }
 
 async function runOpenAI(agent, prompt, options = {}) {
-  if (!process.env.OPENAI_API_KEY) throw new AIProviderError('openai', 'OpenAI fallback credential is not configured');
   const config = providerConfig(options.env);
   const model = options.openaiModel || agent.openaiModel || config.openaiModel;
-  const tools = (agent.tools || []).map((item) => toOpenAITool(item, model));
-  if (agent.webSearch) tools.unshift(openaiWebSearchTool({ searchContextSize: 'medium' }));
   try {
+    if (typeof options.openaiRunner === 'function') {
+      const stub = await options.openaiRunner({ agent, prompt: String(prompt || ''), model, maxTurns: Math.max(1, Math.min(40, Number(options.maxTurns || 12))) });
+      return { finalOutput: String(stub?.finalOutput || stub?.output || '').trim(), provider: 'openai', model: stub?.model || model, evidenceUrls: [] };
+    }
+    if (!process.env.OPENAI_API_KEY) throw new AIProviderError('openai', 'OpenAI fallback credential is not configured');
+    const tools = (agent.tools || []).map((item) => toOpenAITool(item, model));
+    if (agent.webSearch) tools.unshift(openaiWebSearchTool({ searchContextSize: 'medium' }));
     const runnerAgent = new Agent({ name: agent.name, model, instructions: agent.instructions || '', tools });
     const result = await openaiRun(runnerAgent, String(prompt || ''), { maxTurns: Math.max(1, Math.min(40, Number(options.maxTurns || 12))) });
     return { finalOutput: String(result.finalOutput || '').trim(), provider: 'openai', model, evidenceUrls: [] };
   } catch (error) {
+    if (error instanceof AIProviderError) throw error;
     const safe = safeAIError(error);
     throw new AIProviderError('openai', safe.message, { statusCode: safe.statusCode, code: safe.code, cause: error });
   }
