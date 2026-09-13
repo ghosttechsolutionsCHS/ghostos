@@ -99,6 +99,7 @@ function n(value) { const number = Number(value); return Number.isFinite(number)
 function latestByAgent(records, agent) {
   return records.filter((r) => r.fields.Agent === agent).sort((a,b)=>new Date(b.fields['Created At']||0)-new Date(a.fields['Created At']||0))[0];
 }
+function linkedJobId(record) { return Array.isArray(record?.fields?.Job) ? record.fields.Job[0] : null; }
 function latestPipelineJob(jobs) {
   return jobs
     .filter((job) => ['Part Research','Ready to Quote','Awaiting Owner'].includes(job.fields['RELAY State']) && String(job.fields['RELAY Next Action'] || '').trim())
@@ -137,6 +138,8 @@ export async function getDashboardSnapshot() {
   const partsCost = jobs.reduce((sum, r) => sum + n(r.fields['Parts Cost']), 0);
   const grossProfit = jobs.reduce((sum, r) => sum + n(r.fields['Gross Profit']), 0);
   const relayDrafts = messages.filter((r) => ['Pending', 'Failed', 'Blocked'].includes(r.fields.Status));
+  const latestRelayDraft = [...relayDrafts].sort((a,b)=>new Date(b.fields['Created At']||0)-new Date(a.fields['Created At']||0))[0] || null;
+  const latestRelayJob = jobs.find((job)=>job.id===linkedJobId(latestRelayDraft)) || null;
   const builderOpen = builderRequests.filter((r) => !['Done', 'Rejected'].includes(r.fields.Status));
   const completionRate = jobs.length ? completed.length / Math.max(1, completed.length + lost.length) : 0;
   const avgTicket = completed.length ? completed.reduce((sum, r) => sum + n(r.fields['Revenue Collected']), 0) / completed.length : 0;
@@ -147,13 +150,14 @@ export async function getDashboardSnapshot() {
   const agentNames = ['ATLAS','FORGE','ECHO','SCOUT','BEACON','RELAY','SUPPLY','DISPATCH','LEDGER','HORIZON','BUILDER'];
   const agents = agentNames.map((name) => {
     const recent = latestByAgent(activity, name);
+    const recentJob = jobs.find((job)=>job.id===linkedJobId(recent)) || null;
     const growth = growthWork.filter((r)=>r.fields.Agent===name).sort((a,b)=>new Date(b.fields['Updated At']||b.fields['Created At']||0)-new Date(a.fields['Updated At']||a.fields['Created At']||0))[0];
     const pendingOwner = pendingApprovals.some((a)=>a.fields['Requested By']===name);
     const activityAge = recent ? Date.now() - new Date(recent.fields['Created At']||0).getTime() : Infinity;
     let status = 'Idle';
     let currentTask = growth?.fields['Current Task'] || (recent?.fields.Status === 'Running' ? recent.fields['Action Type'] : null);
     let latestResult = growth?.fields['Latest Result'] || (recent?.fields.Status !== 'Running' ? recent?.fields.Detail : null);
-    let nextAction = growth?.fields['Next Action'] || null;
+    let nextAction = growth?.fields['Next Action'] || recentJob?.fields?.['RELAY Next Action'] || null;
 
     if (pendingOwner || growth?.fields.Status === 'Needs Owner' || recent?.fields.Status === 'Blocked') status = 'Needs Owner';
     else if (recent?.fields.Status === 'Running' && activityAge < 60*60*1000) status = 'Working';
@@ -163,11 +167,11 @@ export async function getDashboardSnapshot() {
       if (dispatchingJobs.length) {
         status = 'Working';
         currentTask = `Processing ${dispatchingJobs.length} New Lead${dispatchingJobs.length===1?'':'s'}`;
-        nextAction = 'Complete persisted lead triage and verify the resulting workflow artifact.';
+        nextAction = dispatchingJobs[0]?.fields?.['RELAY Next Action'] || nextAction;
       } else if (failedDispatchJobs.length) {
         status = 'Needs Owner';
         currentTask = `${failedDispatchJobs.length} lead processing attempt${failedDispatchJobs.length===1?'':'s'} failed`;
-        nextAction = 'Use the authenticated Process / Retry Lead action after reviewing the recorded dispatch error.';
+        nextAction = failedDispatchJobs[0]?.fields?.['RELAY Next Action'] || nextAction;
       } else if (pipelineJob) {
         currentTask = pipelineJob.fields['Job / Customer'] || 'Repair pipeline';
         nextAction = pipelineJob.fields['RELAY Next Action'];
@@ -176,7 +180,7 @@ export async function getDashboardSnapshot() {
     if (name === 'RELAY' && relayDrafts.length && status !== 'Working' && status !== 'Needs Owner') {
       status = 'Waiting';
       currentTask = `${relayDrafts.length} customer draft${relayDrafts.length===1?'':'s'} waiting for owner review/send`;
-      nextAction = 'Owner reviews/edits the draft, copies it, sends personally, then marks it sent.';
+      nextAction = latestRelayJob?.fields?.['RELAY Next Action'] || nextAction;
     }
 
     return { name, status, currentTask, latestResult, nextAction, lastAction: recent?.fields['Action Type'] || null, lastActivity: recent?.fields['Created At'] || null };
