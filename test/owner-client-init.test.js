@@ -39,10 +39,11 @@ test('owner navigation still initializes when sessionStorage is unavailable',()=
     console
   };
 
-  assert.doesNotThrow(()=>vm.runInNewContext(ownerScript(),sandbox));
+  const instrumented=`${ownerScript()}\n;globalThis.__ownerTest={title:()=>document.getElementById('pageTitle').textContent,error:()=>document.getElementById('err').textContent,hash:()=>location.hash};`;
+  assert.doesNotThrow(()=>vm.runInNewContext(instrumented,sandbox));
   assert.equal(typeof clickHandler,'function');
   clickHandler({target:{closest:()=>({dataset:{view:'marketing'}})}});
-  assert.equal(element('pageTitle').textContent,'Marketing');
-  assert.equal(location.hash,'marketing');
-  assert.match(element('err').textContent,/Browser storage is unavailable/);
+  assert.equal(sandbox.__ownerTest.title(),'Marketing');
+  assert.equal(sandbox.__ownerTest.hash(),'marketing');
+  assert.match(sandbox.__ownerTest.error(),/Browser storage is unavailable/);
 });
