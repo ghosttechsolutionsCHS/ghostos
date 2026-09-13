@@ -8,6 +8,7 @@ function memoryHarness({ jobFields = {}, failFirst = false } = {}) {
   const jobs = new Map([['job1',{ id:'job1', fields:{ 'Job / Customer':'Test lead', 'Customer Name':'Test', Phone:'8435550100', Status:'New Lead', ...jobFields } }]]);
   const messages=[];
   const activity=[];
+  const pipeline=[];
   let processorCalls=0;
   let shouldFail=failFirst;
   let tick=0;
@@ -35,13 +36,14 @@ function memoryHarness({ jobFields = {}, failFirst = false } = {}) {
     await logActivity({agent:'ATLAS',jobId,actionType:'run_completed',status:'Done',detail:'Lead triaged and RELAY draft prepared.'});
     return 'ok';
   };
+  const runPartsQuotePipeline=async(jobId)=>{pipeline.push(jobId);return{applicable:false,jobId,reason:'test harness'};};
   const deps={
     createRecord,
     getRecord:async(table,id)=>{assert.equal(table,TABLES.JOBS);return jobs.get(id);},
     listRecords:async(table)=>table===TABLES.JOBS?[...jobs.values()]:table===TABLES.MESSAGES?messages:[],
-    updateRecord,logActivity,createRelayDraft,processLead,now,
+    updateRecord,logActivity,createRelayDraft,processLead,runPartsQuotePipeline,now,
   };
-  return { jobs,messages,activity,deps,get processorCalls(){return processorCalls;} };
+  return { jobs,messages,activity,pipeline,deps,get processorCalls(){return processorCalls;} };
 }
 
 test('exact live state: blank dispatch fields + New Lead + existing RELAY Reply Draft + empty RELAY Messages is backfilled', async()=>{
@@ -89,6 +91,24 @@ test('fresh New Lead with no prior draft executes real ATLAS/RELAY chain and per
   assert.ok(h.activity.some(a=>a.actionType==='lead_dispatch_started'&&a.status==='Running'));
   assert.ok(h.activity.some(a=>a.actionType==='customer_message_drafted'&&a.agent==='RELAY'));
   assert.ok(h.activity.some(a=>a.actionType==='lead_dispatch_completed'&&a.agent==='ATLAS'));
+});
+
+test('processed repair lead is handed to downstream Parts + Quote pipeline without regenerating RELAY triage', async()=>{
+  const h=memoryHarness({jobFields:{
+    'Device / Service':'Apple (iPhone) - iPhone 17 Pro Max',
+    Issue:'Cracked screen',
+    'RELAY Reply Draft':'I am checking inventory for the correct screen.',
+    'RELAY State':'Awaiting Owner',
+    'GhostOS Dispatch Status':'Processed',
+  }});
+  h.messages.push({id:'msg-existing',fields:{Job:['job1'],Body:'I am checking inventory for the correct screen.','Message Type':'follow_up',Status:'Pending'}});
+
+  const result=await createLeadDispatcher(h.deps).runCycle({maxLeads:5});
+  assert.equal(result.leadsEligible,0);
+  assert.equal(h.processorCalls,0);
+  assert.deepEqual(h.pipeline,['job1']);
+  assert.equal(result.pipelineCandidates,1);
+  assert.equal(result.pipelineResults[0].jobId,'job1');
 });
 
 test('pre-reconciliation failure is no longer silent: failed write is persisted and cycle summary records failure', async()=>{
