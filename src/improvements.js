@@ -1,10 +1,10 @@
-import { Agent, run, tool } from '@openai/agents';
+import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
+import { runAgent } from './ai-provider.js';
 import { TABLES, listRecords, getRecord, updateRecord, logActivity } from './airtable.js';
 import { createBuilderRequest, analyzeBuilderRequest, createBuildProposal } from './builder.js';
 
-const MODEL = process.env.GHOSTOS_MODEL || 'gpt-5.6-sol';
 const DEFAULT_REPO = 'ghosttechsolutionsCHS/ghostos';
 export const MAX_AUTONOMOUS_SUGGESTIONS_PER_DAY = 3;
 export const DEDUP_WINDOW_DAYS = 30;
@@ -110,14 +110,14 @@ function discoveryAgent(createdIds) {
     }),
     async execute(candidate) { const result = await storeCandidate(candidate); if (result.request?.id) createdIds.push(result.request.id); return result; },
   });
-  return new Agent({ name: 'BUILDER-IMPROVEMENT-REVIEW', model: MODEL, tools: [save], instructions: `You are the GhostOS continuous-improvement reviewer. Use only evidence supplied in the prompt, including recent Agent Activity, owner feedback, business controls, and a safe repository snapshot. Identify at most three high-value improvements from failed/repetitive workflows, repeated owner actions, agent errors, dashboard friction, stale/unused paths, missing validation, business-control mismatches, or recurring manual tasks that can safely be automated. Do not invent evidence. Do not suggest cosmetic work unless it materially reduces errors or owner effort. Avoid ideas similar to rejected/dismissed feedback. Score Business Impact 1-10 and Engineering Value 1-10 separately. Every saved suggestion must include Problem, Evidence, Expected Benefit, Proposed Change, Risk, Estimated Complexity, likely files, verification plan and both scores. Security, auth, secrets, permissions, payments, spending, contracts, destructive data, migrations, or owner-control changes MUST be HIGH risk. Never suggest weakening approval/security boundaries.` });
+  return { name: 'BUILDER-IMPROVEMENT-REVIEW', tools: [save], instructions: `You are the GhostOS continuous-improvement reviewer. Use only evidence supplied in the prompt, including recent Agent Activity, owner feedback, business controls, and a safe repository snapshot. Identify at most three high-value improvements from failed/repetitive workflows, repeated owner actions, agent errors, dashboard friction, stale/unused paths, missing validation, business-control mismatches, or recurring manual tasks that can safely be automated. Do not invent evidence. Do not suggest cosmetic work unless it materially reduces errors or owner effort. Avoid ideas similar to rejected/dismissed feedback. Score Business Impact 1-10 and Engineering Value 1-10 separately. Every saved suggestion must include Problem, Evidence, Expected Benefit, Proposed Change, Risk, Estimated Complexity, likely files, verification plan and both scores. Security, auth, secrets, permissions, payments, spending, contracts, destructive data, migrations, or owner-control changes MUST be HIGH risk. Never suggest weakening approval/security boundaries.` };
 }
 
 export async function runImprovementCycle({ allowAutonomousProposal = true } = {}) {
-  requireEnv('OPENAI_API_KEY'); requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID'); requireEnv('GITHUB_TOKEN');
+  requireEnv('AIRTABLE_PAT'); requireEnv('AIRTABLE_BASE_ID'); requireEnv('GITHUB_TOKEN');
   const signals = await recentSignals(), createdIds = [];
   await logActivity({ agent: 'BUILDER', actionType: 'improvement_cycle_started', status: 'Running', detail: 'Scanning operations, owner feedback, controls and safe repository evidence for worthwhile improvements.' });
-  await run(discoveryAgent(createdIds), `Review these GhostOS signals and save only worthwhile improvements. Respect the daily cap and avoid repeated low-value ideas.\n\nSIGNALS:\n${JSON.stringify(signals).slice(0, 120000)}`, { maxTurns: 12 });
+  await runAgent(discoveryAgent(createdIds), `Review these GhostOS signals and save only worthwhile improvements. Respect the daily cap and avoid repeated low-value ideas.\n\nSIGNALS:\n${JSON.stringify(signals).slice(0, 120000)}`, { maxTurns: 12, observerAgent: 'BUILDER' });
   const outcomes = [];
   for (const id of createdIds) {
     let record = await getRecord(TABLES.BUILDER, id);
