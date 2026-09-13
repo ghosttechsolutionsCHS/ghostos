@@ -1,0 +1,1 @@
+Current social creative will use a unique verified asset URL to avoid cached/truncated images. Generated 2026-09-13.
