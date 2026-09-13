@@ -1,5 +1,8 @@
 name: creative-redesign-hotfix
-on: workflow_dispatch
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/creative-redesign-hotfix.yml']
 permissions:
   contents: write
 jobs:
