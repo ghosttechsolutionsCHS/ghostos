@@ -2,44 +2,68 @@ import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { TABLES, createApproval, createRecord, listRecords, logActivity } from './airtable.js';
 import { createBuilderRequest } from './builder.js';
+import { getExternalMarketingSnapshot } from './marketing-data.js';
 
 const GROWTH_AGENTS = ['FORGE','ECHO','SCOUT','BEACON','HORIZON'];
 
 function num(value) { const n = Number(value); return Number.isFinite(n) ? n : 0; }
 function clean(value, max = 30000) { return String(value || '').slice(0, max); }
 
+function totalsFromChannels(channels = []) {
+  return channels.reduce((a, c) => ({
+    spend:a.spend+num(c.spend), leads:a.leads+num(c.leads), completedJobs:a.completedJobs+num(c.completedJobs),
+    revenue:a.revenue+num(c.revenue), grossProfit:a.grossProfit+num(c.grossProfit), profitAfterSpend:a.profitAfterSpend+num(c.profitAfterSpend),
+  }), { spend:0, leads:0, completedJobs:0, revenue:0, grossProfit:0, profitAfterSpend:0 });
+}
+
 export async function getGrowthSnapshot() {
-  const [channels, jobs, opportunities, work] = await Promise.all([
+  const [channels, jobs, opportunities, work, externalMarketing] = await Promise.all([
     listRecords(TABLES.MARKETING, { maxRecords: 200 }),
     listRecords(TABLES.JOBS, { maxRecords: 500 }),
     listRecords(TABLES.GROWTH, { maxRecords: 250 }),
     listRecords(TABLES.GROWTH_WORK, { maxRecords: 250 }),
+    getExternalMarketingSnapshot(),
   ]);
-  const channelMetrics = channels.map((row) => {
+  const storedChannels = channels.map((row) => {
     const f = row.fields || {};
     const spend = num(f.Spend), leads = num(f.Leads), completedJobs = num(f['Completed Jobs']);
     const revenue = num(f.Revenue), grossProfit = num(f['Gross Contribution']);
     const cac = completedJobs > 0 ? spend / completedJobs : null;
     const profitAfterSpend = grossProfit - spend;
     return {
-      id: row.id, channel: f['Channel / Campaign'] || row.id, platform: f.Platform || '', paidOrFree: f['Paid or Free'] || '', status: f.Status || '',
-      spend, leads, bookings: num(f.Bookings), completedJobs, revenue, grossProfit, cac, profitAfterSpend,
+      id: row.id, source:'airtable', channel: f['Channel / Campaign'] || row.id, platform: f.Platform || '', paidOrFree: f['Paid or Free'] || '', status: f.Status || '',
+      spend, leads, bookings: num(f.Bookings), completedJobs, revenue, grossProfit, cac, costPerLead: leads > 0 ? spend / leads : null, profitAfterSpend,
       profitable: completedJobs > 0 ? profitAfterSpend > 0 : null, nextAction: f['Next Action'] || '', learnings: f.Learnings || '',
     };
   });
   const completedJobs = jobs.filter((j) => j.fields.Status === 'Completed');
+  const attribution = jobs.slice(0, 300).map((j) => ({
+    id:j.id, status:j.fields.Status, leadSource:j.fields['Lead Source'] || '', utmSource:j.fields['UTM Source'] || '',
+    utmMedium:j.fields['UTM Medium'] || '', utmCampaign:j.fields['UTM Campaign'] || '', revenue:num(j.fields['Revenue Collected']), grossProfit:num(j.fields['Gross Profit'])
+  }));
+  const liveChannels = externalMarketing.channelMetrics || [];
   return {
-    channels: channelMetrics,
-    totals: channelMetrics.reduce((a, c) => ({ spend:a.spend+c.spend, leads:a.leads+c.leads, completedJobs:a.completedJobs+c.completedJobs, revenue:a.revenue+c.revenue, grossProfit:a.grossProfit+c.grossProfit, profitAfterSpend:a.profitAfterSpend+c.profitAfterSpend }), { spend:0, leads:0, completedJobs:0, revenue:0, grossProfit:0, profitAfterSpend:0 }),
-    attribution: jobs.slice(0, 300).map((j) => ({ id:j.id, status:j.fields.Status, leadSource:j.fields['Lead Source'] || '', utmSource:j.fields['UTM Source'] || '', utmMedium:j.fields['UTM Medium'] || '', utmCampaign:j.fields['UTM Campaign'] || '', revenue:num(j.fields['Revenue Collected']), grossProfit:num(j.fields['Gross Profit']) })),
+    channels: storedChannels,
+    totals: totalsFromChannels(storedChannels),
+    attribution,
     business: { totalJobs: jobs.length, completedJobs: completedJobs.length, completedRevenue: completedJobs.reduce((s,j)=>s+num(j.fields['Revenue Collected']),0), completedGrossProfit: completedJobs.reduce((s,j)=>s+num(j.fields['Gross Profit']),0) },
     opportunities: opportunities.slice(0, 100), work: work.slice(0, 120),
+    marketingData: {
+      source: externalMarketing.source,
+      snapshots: externalMarketing.snapshots || [],
+      channelMetrics: liveChannels,
+      campaignMetrics: externalMarketing.campaignMetrics || [],
+      attribution: externalMarketing.attribution?.length ? externalMarketing.attribution : attribution,
+      recommendations: externalMarketing.recommendations || [],
+      agentActivity: externalMarketing.agentActivity || [],
+      totals: totalsFromChannels(liveChannels),
+    },
   };
 }
 
 export const getGrowthDataTool = tool({
   name: 'get_growth_data',
-  description: 'Read stored Ghost Tech marketing channels, attribution, completed-job economics, growth opportunities and existing Growth Work. No external action occurs.',
+  description: 'Read stored Ghost Tech marketing channels, provider-neutral Windsor marketing snapshots when configured, attribution, completed-job economics, growth opportunities and existing Growth Work. Missing external data remains explicitly absent; no external action occurs.',
   parameters: z.object({}), async execute() { return getGrowthSnapshot(); },
 });
 
@@ -82,12 +106,12 @@ export const beaconBuilderTool = tool({
 
 export const forge = {
   name: 'FORGE', tools: [getGrowthDataTool, saveGrowthWorkTool],
-  instructions: `You are FORGE, Paid Marketing for Ghost Tech Solutions. Analyze only stored marketing/ad performance supplied by get_growth_data. Calculate and discuss leads, completed jobs, revenue, gross profit, CAC (spend divided by completed jobs when completed jobs > 0), and profit after spend. Measure success by profitable completed jobs, never clicks/impressions. Make missing data explicit. Recommend campaign/budget changes, but NEVER increase spend, launch/pause ads, alter budgets, or claim an ad action happened. Any material spend recommendation must be saved with ownerApprovalRequired=true and approvalType=Ad Spend. Save useful analysis to Growth Work.`
+  instructions: `You are FORGE, Paid Acquisition for Ghost Tech Solutions. Analyze only connected or stored marketing/ad performance supplied by get_growth_data. Focus on spend, leads, completed jobs, cost per lead, CAC, revenue, gross profit and profit after spend by channel/campaign. Optimize for profitable completed jobs, never clicks alone. Make missing Windsor/attribution data explicit. Recommend campaign/budget changes, but NEVER increase spend, launch/pause ads, alter budgets, or claim an ad action happened. Any material spend recommendation must be saved with ownerApprovalRequired=true and approvalType=Ad Spend. Save useful analysis to Growth Work.`
 };
 
 export const echo = {
   name: 'ECHO', tools: [getGrowthDataTool, saveGrowthWorkTool],
-  instructions: `You are ECHO, Social Media / Content for Ghost Tech Solutions. Use actual Ghost Tech services, stored jobs/business context, and verified facts to create content ideas, captions, offers and posting calendars. Never fabricate reviews, customer stories, outcomes, job details, before/after results, or testimonials. Never autonomously publish or claim something was posted. Save drafts/calendars to Growth Work for owner review.`
+  instructions: `You are ECHO, Organic Social for Ghost Tech Solutions. Use connected/stored Facebook and Instagram performance when available plus actual Ghost Tech services and verified business context. Track content performance and maintain a useful content queue. Never fabricate reviews, customer stories, outcomes, job details, before/after results, testimonials, reach or engagement. Never autonomously publish or claim something was posted. Save drafts/calendars to Growth Work for owner review.`
 };
 
 export const scout = {
@@ -97,12 +121,12 @@ export const scout = {
 
 export const beacon = {
   name: 'BEACON', webSearch: true, tools: [getGrowthDataTool, saveGrowthWorkTool, beaconBuilderTool],
-  instructions: `You are BEACON, Website + SEO for Ghost Tech Solutions. Analyze available website/lead attribution, service-page opportunities, SEO, conversion friction and customer acquisition paths using supplied data and live public web evidence when relevant. Produce prioritized recommendations. You may queue a Builder Request for technical site improvements using queue_site_builder_request, but NEVER modify production directly or bypass BUILDER controls. Never claim a site change or ranking improvement occurred without connected-system confirmation.`
+  instructions: `You are BEACON, Website + SEO for Ghost Tech Solutions. Analyze connected/stored GA4, Search Console and Google Business Profile data when available, plus website/lead attribution, service-page opportunities, search queries, local presence and conversion friction. Produce prioritized recommendations. You may queue a Builder Request for technical site improvements using queue_site_builder_request, but NEVER modify production directly or bypass BUILDER controls. Never claim traffic, rankings, conversions or site changes occurred without connected-system confirmation.`
 };
 
 export const horizon = {
   name: 'HORIZON', webSearch: true, tools: [getGrowthDataTool, saveGrowthWorkTool],
-  instructions: `You are HORIZON, Growth / Partnerships for Ghost Tech Solutions. Identify and track credible B2B/referral partners such as restaurants, small businesses, property managers, cafes, hotels, taxi/transportation companies and local businesses needing ongoing tech support. Use live public evidence when finding real businesses. Produce partnership briefs and owner-review outreach drafts. Never claim outreach occurred. Never negotiate, agree to terms, sign, or create a contract/deal. Any proposed contract or binding partnership action must be saved with ownerApprovalRequired=true and approvalType=Contract.`
+  instructions: `You are HORIZON, Growth for Ghost Tech Solutions. Combine acquisition, customer/job attribution, revenue and gross-profit data to identify credible growth opportunities and profitable channels. Use live public evidence only when finding external opportunities. Produce concise executive recommendations for ATLAS/owner. Never claim outreach occurred. Never negotiate, agree to terms, sign, create a contract/deal, or spend money. Any proposed contract or binding action must use the existing owner approval boundary.`
 };
 
 export const growthAgents = { FORGE: forge, ECHO: echo, SCOUT: scout, BEACON: beacon, HORIZON: horizon };
