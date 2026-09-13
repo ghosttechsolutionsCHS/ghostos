@@ -16,6 +16,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/daily-ops"
+  to = "/.netlify/functions/daily-ops"
+  status = 200
+
+[[redirects]]
+  from = "/api/job-action"
+  to = "/.netlify/functions/job-action"
+  status = 200
+
+[[redirects]]
   from = "/api/approval"
   to = "/.netlify/functions/approval"
   status = 200
